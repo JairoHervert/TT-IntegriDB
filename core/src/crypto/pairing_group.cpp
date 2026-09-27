@@ -4,6 +4,7 @@
 
 #include <NTL/ZZ.h>
 
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -40,7 +41,6 @@ PairingGroup build_group() {
     if (r.str() != kGroupOrder) {
         throw std::runtime_error("el orden r de ate-pairing no coincide con el modulo de NTL");
     }
-    NTL::ZZ_p::init(NTL::conv<NTL::ZZ>(kGroupOrder));
 
     PairingGroup group{
         bn::Ec1(kG1x, kG1y),
@@ -56,7 +56,16 @@ PairingGroup build_group() {
 }  // namespace
 
 const PairingGroup& init_pairing_group() {
+    // Inicializacion de variable estatica: C++ garantiza que ocurre una sola
+    // vez aunque varios hilos llamen al mismo tiempo.
     static const PairingGroup group = build_group();
+
+    // NTL guarda el modulo de ZZ_p por hilo.
+    thread_local bool field_ready = false;
+    if (!field_ready) {
+        NTL::ZZ_p::init(NTL::conv<NTL::ZZ>(kGroupOrder));
+        field_ready = true;
+    }
     return group;
 }
 
@@ -72,6 +81,27 @@ mie::Vuint to_vuint(const NTL::ZZ_p& z) {
     std::ostringstream os;
     os << NTL::rep(z);
     return mie::Vuint(os.str());
+}
+
+std::vector<unsigned char> scalar_to_bytes(const NTL::ZZ_p& z) {
+    std::vector<unsigned char> out(kScalarBytes);
+    NTL::BytesFromZZ(out.data(), NTL::rep(z), static_cast<long>(out.size()));  // little-endian
+    std::reverse(out.begin(), out.end());                                        // big-endian
+    return out;
+}
+
+NTL::ZZ_p scalar_from_bytes(const std::vector<unsigned char>& bytes) {
+    if (bytes.size() != kScalarBytes) {
+        throw std::invalid_argument("un escalar debe ocupar 32 bytes");
+    }
+    std::vector<unsigned char> little(bytes.rbegin(), bytes.rend());
+    NTL::ZZ value;
+    NTL::ZZFromBytes(value, little.data(), static_cast<long>(little.size()));
+    if (value >= NTL::conv<NTL::ZZ>(kGroupOrder)) {
+        throw std::invalid_argument("el escalar no es menor que el orden r");
+    }
+    init_pairing_group();
+    return NTL::conv<NTL::ZZ_p>(value);
 }
 
 }  // namespace tt::crypto

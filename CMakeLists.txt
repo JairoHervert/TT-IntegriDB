@@ -37,10 +37,11 @@ find_path(ATE_PAIRING_INCLUDE_DIR bn.h
 find_library(ATE_PAIRING_LIB zm
              PATHS "${ATE_PAIRING_DIR}/lib" NO_DEFAULT_PATH REQUIRED)
 
-# libntl-dev y libgmp-dev (apt)
+# libntl-dev, libgmp-dev y libssl-dev (apt)
 find_library(NTL_LIB ntl REQUIRED)
 find_library(GMP_LIB gmp REQUIRED)
 find_library(GMPXX_LIB gmpxx REQUIRED)
+find_package(OpenSSL 3 REQUIRED)
 find_package(Threads REQUIRED)
 
 # ate-pairing como objetivo importado. MIE_ATE_USE_GMP debe coincidir con la

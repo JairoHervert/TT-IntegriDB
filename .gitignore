@@ -1,4 +1,4 @@
-# TT 2026-B143 - TT_Code
+# TT 2026-B143 - TT-IntegriDB
 
 # --- Python (generador de datos sintéticos, y cualquier script futuro) ---
 __pycache__/
@@ -7,7 +7,7 @@ __pycache__/
 .venv/
 venv/
 
-# --- C/C++ (prover/ y verifier/, cuando tengan código) ---
+# --- C/C++ ---
 *.o
 *.obj
 *.a
@@ -32,7 +32,14 @@ Thumbs.db
 *.log
 /tmp_*.sql
 
-# --- Secretos (si algún día este proyecto sale de un entorno de prueba local) ---
+# --- Claves generadas por tt_owner init ---
+# La clave secreta sk_D nunca debe subirse; la publica se regenera con Init
+# y pesa varios MB, asi que tampoco va al repositorio.
+keys/
+secret_key*.txt
+public_key*.txt
+
+# --- Otros secretos ---
 .env
 *.pem
 *.key

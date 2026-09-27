@@ -10,8 +10,13 @@ academic_records_db/      base de datos del caso de estudio (Servidor SQL)
   init/02_seed_data.sql     datos sintéticos: 500 alumnos (~15,200 registros)
   tools/                    generador de datos y notas de uso
 core/                     núcleo compartido: el esquema (sin MySQL ni red)
-  include/tt/crypto/        grupo bilineal BN254 (ate-pairing + NTL)
-owner/                    Propietario de datos: Init + Setup
+  include/tt/crypto/        grupo bilineal BN254, aleatoriedad segura,
+                            SHA-256 y Enc (AES-128-CBC)
+  include/tt/aso/           claves y acumulador del bloque ASO
+  include/tt/ait/           árbol de intervalos autenticado: Setup,
+                            RangeCover/Search y su verificación
+  include/tt/scheme/        Init del esquema y archivos de claves
+owner/                    Propietario de datos: Init (Setup pendiente)
 prover/                   módulo probador (bloque Servidor)
 verifier/                 Cliente SQL + módulo verificador (bloque Cliente)
 tests/                    pruebas del núcleo
@@ -39,10 +44,14 @@ verificador trabajan con la clave pública `pk`.
 Dependencias, una sola vez:
 
 ```bash
-sudo apt install build-essential cmake git libgmp-dev libntl-dev
+sudo apt install build-essential cmake git libgmp-dev libntl-dev libssl-dev
 git clone https://github.com/herumi/ate-pairing.git ~/ate-pairing
 make -C ~/ate-pairing/src
 ```
+
+Al compilar ate-pairing aparecen advertencias `-Warray-bounds` en
+`xbyak.h`; son falsos positivos de GCC reciente sobre ese código y no
+afectan (las pruebas de bilinealidad pasan).
 
 Compilar y correr las pruebas, desde la raíz del repositorio:
 
@@ -55,6 +64,44 @@ ctest --test-dir build --output-on-failure
 Los ejecutables quedan en `build/owner/tt_owner`, `build/prover/tt_prover`
 y `build/verifier/tt_verifier`. Si ate-pairing está en otra ruta:
 `cmake -S . -B build -DATE_PAIRING_DIR=/otra/ruta`.
+
+## Generar las claves (algoritmo Init)
+
+```bash
+./build/owner/tt_owner init --q 16000 --out keys --check
+```
+
+- `--q` es la cota superior del tamaño de cualquier conjunto autenticado:
+  debe ser al menos el número de filas de la tabla más grande
+  (`academic_record`: ~15,200 con el tamaño por defecto, ~29,200 con
+  `medium`, ~60,100 con `large`).
+- Escribe `keys/public_key.txt` (clave pública `pk`, para el probador y el
+  verificador) y `keys/secret_key.txt` (clave secreta `sk_D`, permisos 600,
+  nunca sale del propietario). Ninguna de las dos se sube al repositorio.
+- `--check` comprueba después la estructura de `pk` (tarda lo mismo que
+  Init). Sin `--force` no reemplaza claves existentes: generar otras
+  invalidaría todo lo autenticado con las anteriores.
+
+Referencia medida en la VM de pruebas (Ubuntu 26.04, GCC 15.2, un solo
+hilo, q = 16000): Init 6.26 s, comprobación de estructura 6.84 s, guardado
+0.27 s, `public_key.txt` de 9.4 MB.
+
+## Árbol de intervalos autenticado (AIT)
+
+`core/include/tt/ait/` implementa el AIT tal como lo describe el reporte:
+árbol binario balanceado con una hoja por clave distinta, clave de cada
+nodo interno igual a la máxima de su subárbol izquierdo, valor
+`Enc_sk(e_u) || g^{e_u}` con `e_u = ∏ (v^{-1} + s)` y hashes de Merkle
+(SHA-256). Cada hash compromete también la clave mínima y máxima del
+subárbol y el número de filas, de modo que el verificador comprueba solo
+con el digest que una prueba de rango no omite ni agrega filas.
+`tests/ait_test.cpp` incluye los ataques de un probador malicioso y una
+réplica de `single_d_verify` del IntegriDB original, que acepta un
+resultado incompleto que este verificador rechaza.
+
+Referencia (15,200 filas, medido fuera de la VM): Setup de un AIT con
+15,200 claves distintas 8.9 s (con 6 claves distintas, 0.01 s); prueba de
+un rango de ~200 filas ≈ 3.3 KB; verificarla < 0.1 ms.
 
 ## Levantar la base de datos
 
