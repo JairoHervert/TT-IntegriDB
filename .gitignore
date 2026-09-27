@@ -1,0 +1,38 @@
+# TT 2026-B143 - TT_Code
+
+# --- Python (generador de datos sintéticos, y cualquier script futuro) ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- C/C++ (prover/ y verifier/, cuando tengan código) ---
+*.o
+*.obj
+*.a
+*.so
+*.out
+*.exe
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+
+# --- Editor / SO ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Logs y datos generados que no van al repo ---
+*.log
+/tmp_*.sql
+
+# --- Secretos (si algún día este proyecto sale de un entorno de prueba local) ---
+.env
+*.pem
+*.key

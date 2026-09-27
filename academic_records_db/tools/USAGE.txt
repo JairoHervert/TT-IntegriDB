@@ -1,0 +1,188 @@
+generate_synthetic_data.py - notas de uso
+==========================================
+
+Qué hace
+--------
+Genera un archivo .sql con datos sintéticos reproducibles para el esquema
+académico del TT 2026-B143 (program, student, course, academic_record).
+Solo usa la biblioteca estándar de Python, no hay que instalar nada.
+Requiere Python 3.7 o superior.
+
+Incluye 5 carreras, cada una con su propio plan de 8 semestres. ISC usa
+el mapa curricular real del plan 2020 de la ESCOM; las otras cuatro usan
+planes inventados que mantienen una secuencia lógica.
+
+Tamaños (número de alumnos):
+  small  ->    500   (por defecto)   ~15,200 registros académicos
+  medium ->  1,000                   ~29,200 registros académicos
+  large  ->  2,000                   ~60,100 registros académicos
+
+Los comandos de abajo asumen que estás en la raíz de TT-IntegriDB.
+
+
+Crear la base del caso de estudio desde cero (en la VM de Ubuntu)
+------------------------------------------------------------------
+
+Paso 0. Borrar las bases anteriores.
+
+   a) La base de prueba de TT_auxiliares (contenedor tt_mysql). Libera el
+      puerto 3306. La imagen mysql:8.4 NO se borra, la nueva la reutiliza.
+
+    cd ~/prueba-mysql-docker
+    docker compose down -v
+
+      Si esa carpeta ya no existe en la VM, bórrala por nombre:
+
+    docker rm -f tt_mysql
+    docker volume rm prueba-mysql-docker_tt_mysql_data
+    docker network rm prueba-mysql-docker_default
+
+   b) Si ya habías levantado una versión anterior de TT-IntegriDB (contenedor
+      tt_db), bórrala también, porque sus datos ya no sirven:
+
+    cd ~/TT-IntegriDB
+    docker compose down -v
+    cd ~
+    rm -rf ~/TT-IntegriDB
+
+      Si esa carpeta ya no existe, bórrala por nombre:
+
+    docker rm -f tt_db
+    docker volume rm tt-integridb_tt_db_data
+
+   Comprobar que no queda nada anterior:
+
+    docker ps -a
+    docker volume ls
+
+   No debe aparecer tt_mysql ni tt_db, ni volúmenes con esos nombres.
+
+Paso 1. Copiar TT-IntegriDB a una carpeta normal de Linux (no trabajar dentro
+   de la carpeta compartida de VirtualBox). Primero pon TT-IntegriDB en la
+   carpeta compartida desde Windows y luego, en la VM:
+
+    cp -r /media/sf_shared_win_ubuntu/TT-IntegriDB ~/TT-IntegriDB
+    cd ~/TT-IntegriDB
+    chmod -R a+rX academic_records_db
+
+Paso 2. Levantar la base. La primera vez crea el esquema y carga los
+   500 alumnos de las 5 carreras, con las materias en orden de su plan:
+
+    docker compose up -d
+    docker compose ps
+
+   Repite "docker compose ps" hasta que diga "healthy".
+
+Paso 3. Verificar que se cargó:
+
+    docker exec -it tt_db mysql -uapp_user -papp_pass_2026 academic_db -e "SELECT COUNT(*) FROM student; SELECT COUNT(*) FROM course; SELECT COUNT(*) FROM academic_record;"
+
+   Debe mostrar 500, 230 y 15171.
+
+Si algo sale mal:
+   - Se queda en "Restarting": revisa los logs con
+
+    docker compose logs db --tail=50
+
+     Si dice "Permission denied", repite el chmod del paso 1 y reinicia
+     desde cero con el comando de abajo.
+   - Reiniciar desde cero (borra los datos y vuelve a ejecutar init/):
+
+    docker compose down -v && docker compose up -d
+
+   - "Access denied for user 'app_user'" aunque diga "healthy": el volumen
+     de datos quedó de un intento anterior que no terminó, así que Docker
+     no volvió a crear el usuario ni a correr init/. En los logs no
+     aparece "Initializing database files". Borra el volumen y levanta
+     de nuevo con el comando de arriba (down -v y luego up -d). Para
+     confirmar que el volumen ya no existe:
+
+    docker volume ls
+
+     No debe aparecer tt-integridb_tt_db_data antes de volver a levantar.
+
+   - Si la VM se congela: cierra programas pesados en Windows antes de
+     levantar el contenedor (la RAM del equipo se satura).
+
+Apagar sin perder datos:              docker compose down
+Volver a encender (datos intactos):   docker compose up -d
+
+
+Comandos listos para usar
+-------------------------
+
+1) Regenerar el archivo de datos por defecto (500 alumnos) que usa Docker:
+
+    python3 academic_records_db/tools/generate_synthetic_data.py --data-only --output academic_records_db/init/02_seed_data.sql
+
+2) Cambiar los datos de Docker a 1000 alumnos y recargar (usa --size large para 2000):
+
+    python3 academic_records_db/tools/generate_synthetic_data.py --size medium --data-only --output academic_records_db/init/02_seed_data.sql
+    docker compose down -v && docker compose up -d
+
+3) Repoblar la base que ya está corriendo SIN borrar el volumen de Docker
+   (el archivo vacía las tablas antes de insertar, se puede repetir):
+
+    python3 academic_records_db/tools/generate_synthetic_data.py --size large --data-only --output /tmp/data_large.sql
+    mysql -h 127.0.0.1 -P 3306 -uapp_user -papp_pass_2026 academic_db < /tmp/data_large.sql
+
+   Esto requiere el cliente mysql en la VM (sudo apt install mysql-client).
+   Sin él, se puede cargar a través del contenedor:
+
+    docker exec -i tt_db mysql -uapp_user -papp_pass_2026 academic_db < /tmp/data_large.sql
+
+4) Archivo completo (CREATE TABLE + datos), por ejemplo para otro servidor:
+
+    python3 academic_records_db/tools/generate_synthetic_data.py --size medium --output data_medium.sql
+
+5) Número exacto de alumnos y semilla fija (anota la semilla en el reporte):
+
+    python3 academic_records_db/tools/generate_synthetic_data.py --students 750 --seed 7 --data-only --output /tmp/data_750.sql
+
+6) Los tres tamaños de una vez:
+
+    for s in small medium large; do python3 academic_records_db/tools/generate_synthetic_data.py --size "$s" --data-only --output "/tmp/data_$s.sql"; done
+
+
+Todas las opciones
+------------------
+--size {small,medium,large}   tamaño predefinido (por defecto small)
+--students N                  número exacto de alumnos, ignora --size
+--seed N                      semilla, por defecto 42; misma semilla = mismo resultado
+--output RUTA                 archivo de salida (por defecto data_<tamaño>.sql)
+--data-only                   sin CREATE TABLE; vacía las tablas y luego inserta
+--batch-size N                filas por INSERT, por defecto 500
+
+
+Cómo son los datos
+------------------
+- 5 carreras: ISC, IIA, LCD, ITI e ICS. Del total de alumnos, ~35% son
+  de ISC y el resto se reparte entre las otras cuatro.
+- Cada carrera tiene su propio plan de 8 semestres y sus propias
+  materias (230 en total). ISC usa las 50 materias del mapa curricular
+  real del plan 2020 de la ESCOM, con sus créditos. IIA, LCD, ITI e ICS
+  tienen 45 materias cada una, inventadas pero en secuencia lógica: lo
+  básico al inicio, lo especializado después y el Trabajo Terminal al
+  final.
+- La clave de la materia indica carrera y semestre: ISC101 es la primera
+  materia de 1er semestre de ISC, LCD805 la quinta de 8o de LCD. Varias
+  carreras comparten nombres de materia (por ejemplo "Calculo"), pero
+  cada una tiene su propia clave, como pasa entre planes de estudio.
+  Los créditos se guardan en décimas (7.5 -> 75).
+- Alumnos admitidos entre 2020-1 y 2026-2. Boleta de 10 dígitos: año de
+  ingreso + código de 2 dígitos de la carrera (63 a 67) + consecutivo.
+- Cada alumno solo cursa materias de su carrera y avanza semestre a
+  semestre: en su k-ésimo periodo solo cursa materias de los semestres
+  1 a k, primero lo pendiente o reprobado y luego lo de su semestre
+  actual. Nunca adelanta materias.
+- Carga de 5 a 7 materias por periodo según el alumno.
+- Calificaciones sesgadas hacia aprobatorias. ~70% de las ordinarias
+  reprobadas tienen extraordinario o ETS en el mismo periodo (tipo 2, 3
+  o 4); si no la aprueba, la recursa en un periodo posterior.
+- ~6% de los alumnos traen una equivalencia (tipo 5) de una materia de
+  1er semestre, registrada en su periodo de ingreso.
+- Algunos alumnos dejan de inscribirse (~3% por periodo) y otros egresan
+  al aprobar todo su plan. Plazo máximo: 12 periodos.
+- Último periodo con calificaciones: 2026-1. Los admitidos en 2026-2
+  existen en student pero aún no tienen calificaciones, porque ese
+  semestre sigue en curso.
