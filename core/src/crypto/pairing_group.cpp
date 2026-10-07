@@ -31,6 +31,21 @@ const char* const kG2bb =
 const int kG1x = -1;
 const int kG1y = 1;
 
+/*
+ * Inicializa ate-pairing con la curva BN254 y construye los generadores
+ * g1 y g2 a partir de sus coordenadas conocidas.
+ *
+ * Antes de devolverlos comprueba dos cosas: que el orden r que reporta
+ * ate-pairing sea el que usaremos como modulo en NTL, y que ambos
+ * generadores esten en su curva. Solo la llama init_pairing_group(), una
+ * vez por proceso.
+ *
+ * Devuelve:
+ *   Los generadores g1 y g2.
+ *
+ * Errores:
+ *   Lanza std::runtime_error si alguna de las dos comprobaciones falla.
+ */
 PairingGroup build_group() {
     bn::Param::init(bn::CurveFp254BNb);
 
@@ -55,6 +70,12 @@ PairingGroup build_group() {
 
 }  // namespace
 
+/*
+ * Implementacion: el grupo vive en una variable estatica local, que C++
+ * construye una sola vez aunque varios hilos llamen al mismo tiempo. El
+ * modulo de NTL se fija con una bandera thread_local, porque NTL lo guarda
+ * por hilo y un hilo nuevo empieza sin modulo.
+ */
 const PairingGroup& init_pairing_group() {
     // Inicializacion de variable estatica: C++ garantiza que ocurre una sola
     // vez aunque varios hilos llamen al mismo tiempo.
@@ -69,20 +90,35 @@ const PairingGroup& init_pairing_group() {
     return group;
 }
 
+/*
+ * Implementacion: devuelve la constante kGroupOrder.
+ */
 const char* group_order_decimal() { return kGroupOrder; }
 
+/*
+ * Implementacion: llama a opt_atePairing de ate-pairing, que recibe primero
+ * el punto de G2 y despues el de G1.
+ */
 bn::Fp12 pairing(const bn::Ec1& p, const bn::Ec2& q) {
     bn::Fp12 e;
     bn::opt_atePairing(e, q, p);
     return e;
 }
 
+/*
+ * Implementacion: pasa el valor por su representacion decimal en texto,
+ * que es el formato que ambas bibliotecas entienden.
+ */
 mie::Vuint to_vuint(const NTL::ZZ_p& z) {
     std::ostringstream os;
     os << NTL::rep(z);
     return mie::Vuint(os.str());
 }
 
+/*
+ * Implementacion: NTL escribe los bytes en orden little-endian; se invierten
+ * para obtener big-endian.
+ */
 std::vector<unsigned char> scalar_to_bytes(const NTL::ZZ_p& z) {
     std::vector<unsigned char> out(kScalarBytes);
     NTL::BytesFromZZ(out.data(), NTL::rep(z), static_cast<long>(out.size()));  // little-endian
@@ -90,6 +126,10 @@ std::vector<unsigned char> scalar_to_bytes(const NTL::ZZ_p& z) {
     return out;
 }
 
+/*
+ * Implementacion: invierte los bytes para que NTL los lea en little-endian,
+ * compara el entero contra r y solo entonces lo convierte a Z_r.
+ */
 NTL::ZZ_p scalar_from_bytes(const std::vector<unsigned char>& bytes) {
     if (bytes.size() != kScalarBytes) {
         throw std::invalid_argument("un escalar debe ocupar 32 bytes");

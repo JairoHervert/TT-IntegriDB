@@ -15,10 +15,14 @@ namespace tt::aso {
 
 namespace {
 
-// Coeficiente aleatorio de 128 bits distinto de cero para las
-// comprobaciones por lotes. 128 bits bastan para que la probabilidad de
-// aceptar una clave mal formada sea ~2^-128, y hacen las multiplicaciones
-// escalares cerca del doble de rapidas que con escalares de 254 bits.
+/*
+ * Genera un coeficiente aleatorio de 128 bits distinto de cero para las
+ * comprobaciones por lotes de is_well_formed().
+ *
+ * 128 bits bastan para que la probabilidad de aceptar una clave mal formada
+ * sea de alrededor de 2^-128, y hacen las multiplicaciones escalares cerca
+ * del doble de rapidas que con escalares de 254 bits.
+ */
 NTL::ZZ_p random_challenge() {
     while (true) {
         std::vector<unsigned char> buf = crypto::random_bytes(16);
@@ -29,6 +33,16 @@ NTL::ZZ_p random_challenge() {
     }
 }
 
+/*
+ * Revisa que todos los puntos de la lista esten en su curva y ninguno sea el
+ * punto al infinito (una potencia de s nunca puede ser O si s != 0).
+ *
+ * Parametros:
+ *   points  lista de puntos de G1 o de G2
+ *
+ * Devuelve:
+ *   true si todos son validos y distintos de O.
+ */
 template <class Point>
 bool all_valid_nonzero(const std::vector<Point>& points) {
     for (const Point& p : points) {
@@ -39,6 +53,11 @@ bool all_valid_nonzero(const std::vector<Point>& points) {
 
 }  // namespace
 
+/*
+ * Implementacion: elige s y a al azar y recorre i = 0..q llevando s^i en una
+ * variable (cada vuelta la multiplica por s). En cada vuelta calcula
+ * g1^{s^i}, g2^{s^i} y g1^{a s^i}; al final, g2^a.
+ */
 KeyPair init(std::size_t q) {
     if (q == 0 || q > kMaxQ) {
         throw std::invalid_argument("aso::init: q debe estar entre 1 y " + std::to_string(kMaxQ));
@@ -66,6 +85,12 @@ KeyPair init(std::size_t q) {
     return kp;
 }
 
+/*
+ * Implementacion: primero las revisiones baratas (tamanos, puntos validos,
+ * subgrupo y generadores); despues las relaciones entre potencias con una
+ * sola combinacion lineal aleatoria por lista. Las ecuaciones que se
+ * comprueban estan detalladas abajo.
+ */
 bool is_well_formed(const PublicKey& pk) {
     const crypto::PairingGroup& group = crypto::init_pairing_group();
 

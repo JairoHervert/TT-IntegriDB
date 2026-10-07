@@ -18,6 +18,15 @@
 #include "tt/crypto/group_ops.hpp"
 #include "tt/crypto/pairing_group.hpp"
 
+/*
+ * Pruebas del bloque ASO: Init (tamanos y relaciones de la clave publica),
+ * is_well_formed (acepta claves correctas y rechaza claves alteradas),
+ * el acumulador (con y sin el secreto, multiconjuntos, casos limite) y las
+ * relaciones entre acumuladores que se verifican con el emparejamiento.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
     using namespace tt;
     using aso::Element;

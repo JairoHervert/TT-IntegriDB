@@ -12,6 +12,14 @@
 
 #include "tt/crypto/pairing_group.hpp"
 
+/*
+ * Punto de entrada del verificador. Por ahora solo inicializa el grupo
+ * bilineal y revisa que el generador g1 sea valido, para confirmar que el
+ * programa enlaza bien con el nucleo.
+ *
+ * Devuelve:
+ *   0 si el grupo quedo listo; 1 si algo fallo.
+ */
 int main() {
     try {
         const tt::crypto::PairingGroup& group = tt::crypto::init_pairing_group();

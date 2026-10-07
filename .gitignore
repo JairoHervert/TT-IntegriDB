@@ -32,6 +32,13 @@ Thumbs.db
 *.log
 /tmp_*.sql
 
+# --- Estado autenticado generado por tt_owner setup ---
+# D~ pesa varios MB y delta se regenera con Setup.
+setup/
+setup_*/
+authenticated_db*.bin
+delta*.txt
+
 # --- Claves generadas por tt_owner init ---
 # La clave secreta sk_D nunca debe subirse; la publica se regenera con Init
 # y pesa varios MB, asi que tampoco va al repositorio.
@@ -43,3 +50,5 @@ public_key*.txt
 .env
 *.pem
 *.key
+
+comands_for_me.txt

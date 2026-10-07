@@ -14,6 +14,15 @@ add_library(tt_core STATIC
   src/ait/node.cpp
   src/ait/tree.cpp
   src/ait/range_proof.cpp
+  src/db/table.cpp
+  src/db/row_hash.cpp
+  src/merkle/tree.cpp
+  src/io/binary.cpp
+  src/io/file.cpp
+  src/scheme/tree_plan.cpp
+  src/scheme/digest.cpp
+  src/scheme/authenticated_db.cpp
+  src/scheme/setup.cpp
 )
 
 target_include_directories(tt_core PUBLIC include)

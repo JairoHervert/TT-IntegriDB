@@ -24,6 +24,11 @@ namespace {
 namespace fs = std::filesystem;
 using tt::scheme::KeyFormatError;
 
+/*
+ * Indica si dos claves publicas son identicas: mismas potencias de s en G1
+ * y G2, mismas potencias de extractabilidad y mismo g2^a. Se usa para
+ * comprobar que escribir y volver a leer una clave no la altera.
+ */
 bool same_public_key(const tt::scheme::PublicKey& x, const tt::scheme::PublicKey& y) {
     const tt::aso::PublicKey& a = x.aso;
     const tt::aso::PublicKey& b = y.aso;
@@ -31,32 +36,58 @@ bool same_public_key(const tt::scheme::PublicKey& x, const tt::scheme::PublicKey
            a.g1_as_powers == b.g1_as_powers && a.g2_a == b.g2_a;
 }
 
+/*
+ * Indica si dos claves secretas son identicas: mismos s, a y clave de Enc.
+ */
 bool same_secret_key(const tt::scheme::SecretKey& x, const tt::scheme::SecretKey& y) {
     return x.aso.s == y.aso.s && x.aso.a == y.aso.a && x.enc_key == y.enc_key;
 }
 
+/*
+ * Devuelve el texto que se escribiria en public_key.txt para `pk`, sin
+ * tocar el disco. Sirve como punto de partida para las pruebas que alteran
+ * el archivo.
+ */
 std::string public_text(const tt::scheme::PublicKey& pk) {
     std::ostringstream out;
     tt::scheme::write_public_key(out, pk);
     return out.str();
 }
 
+/*
+ * Devuelve el texto que se escribiria en secret_key.txt para `sk`, sin
+ * tocar el disco.
+ */
 std::string secret_text(const tt::scheme::SecretKey& sk) {
     std::ostringstream out;
     tt::scheme::write_secret_key(out, sk);
     return out.str();
 }
 
+/*
+ * Lee una clave publica desde un texto en memoria (como si fuera el
+ * contenido de public_key.txt). Lanza KeyFormatError si el texto no es
+ * valido.
+ */
 tt::scheme::PublicKey read_public(const std::string& text) {
     std::istringstream in(text);
     return tt::scheme::read_public_key(in);
 }
 
+/*
+ * Lee una clave secreta desde un texto en memoria (como si fuera el
+ * contenido de secret_key.txt). Lanza KeyFormatError si el texto no es
+ * valido.
+ */
 tt::scheme::SecretKey read_secret(const std::string& text) {
     std::istringstream in(text);
     return tt::scheme::read_secret_key(in);
 }
 
+/*
+ * Parte un texto en lineas (sin el salto de linea), para poder editar
+ * lineas sueltas de un archivo de claves.
+ */
 std::vector<std::string> lines_of(const std::string& text) {
     std::vector<std::string> lines;
     std::istringstream in(text);
@@ -65,14 +96,26 @@ std::vector<std::string> lines_of(const std::string& text) {
     return lines;
 }
 
+/*
+ * Une las lineas en un solo texto, cada una terminada en salto de linea.
+ * Es la operacion inversa de lines_of.
+ */
 std::string join(const std::vector<std::string>& lines) {
     std::string text;
     for (const std::string& line : lines) text += line + "\n";
     return text;
 }
 
-// Aplica `edit` a las lineas de `text` y comprueba que la lectura lo rechaza
-// con KeyFormatError (y no, por ejemplo, terminando el proceso).
+/*
+ * Altera un archivo de clave publica y comprueba que la lectura lo
+ * rechace con KeyFormatError (y no, por ejemplo, terminando el proceso
+ * como hace el lector de ate-pairing con algunos numeros mal escritos).
+ *
+ * Parametros:
+ *   text  contenido valido de public_key.txt
+ *   edit  funcion que modifica las lineas (quita una, cambia un numero...)
+ *   name  descripcion de la alteracion, para la salida de la prueba
+ */
 void expect_public_rejected(const std::string& text,
                             const std::function<void(std::vector<std::string>&)>& edit,
                             const std::string& name) {
@@ -82,6 +125,14 @@ void expect_public_rejected(const std::string& text,
     tt::test::check_throws<KeyFormatError>([&] { read_public(edited); }, name);
 }
 
+/*
+ * Igual que expect_public_rejected, pero para secret_key.txt.
+ *
+ * Parametros:
+ *   text  contenido valido de secret_key.txt
+ *   edit  funcion que modifica las lineas
+ *   name  descripcion de la alteracion, para la salida de la prueba
+ */
 void expect_secret_rejected(const std::string& text,
                             const std::function<void(std::vector<std::string>&)>& edit,
                             const std::string& name) {
@@ -91,12 +142,26 @@ void expect_secret_rejected(const std::string& text,
     tt::test::check_throws<KeyFormatError>([&] { read_secret(edited); }, name);
 }
 
+/*
+ * Devuelve la posicion de la primera linea igual a `value` (por ejemplo, el
+ * encabezado de una seccion), o lines.size() si no esta.
+ */
 std::size_t index_of(const std::vector<std::string>& lines, const std::string& value) {
     return static_cast<std::size_t>(std::find(lines.begin(), lines.end(), value) - lines.begin());
 }
 
 }  // namespace
 
+/*
+ * Pruebas del Init del esquema y de los archivos de claves: Init produce
+ * claves validas y distintas en cada ejecucion; escribir y leer una clave
+ * la deja igual; la lectura rechaza archivos alterados, incompletos o con
+ * basura; y los archivos se crean con los permisos esperados sin
+ * sobrescribir claves existentes por accidente.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
     using tt::test::check;
     using tt::test::check_throws;

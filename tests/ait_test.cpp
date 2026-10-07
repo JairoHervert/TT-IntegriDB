@@ -35,7 +35,14 @@ using test::check;
 using test::check_throws;
 using test::section;
 
-// Claves de cada nivel del arbol, de la raiz hacia abajo (recorrido por niveles).
+/*
+ * Recorre el arbol por niveles (de la raiz hacia abajo, de izquierda a
+ * derecha) y devuelve la clave de cada nodo. Sirve para comparar la forma
+ * del arbol con las figuras del reporte.
+ *
+ * Devuelve:
+ *   Un vector por nivel con las claves (split_key) de sus nodos.
+ */
 std::vector<std::vector<Key>> keys_by_level(const ait::Tree& tree) {
     std::vector<std::vector<Key>> levels;
     std::queue<std::pair<std::int32_t, std::size_t>> pending;
@@ -54,7 +61,14 @@ std::vector<std::vector<Key>> keys_by_level(const ait::Tree& tree) {
     return levels;
 }
 
-// Valores (ordenados por clave y luego por valor) de las filas con clave en [lo, hi].
+/*
+ * Respuesta de referencia para RangeCover: filtra a mano las filas con
+ * clave en [lo, hi], sin usar el arbol.
+ *
+ * Devuelve:
+ *   Los valores ordenados por clave y, dentro de una clave, por valor (el
+ *   mismo orden en que los entrega Tree::range).
+ */
 std::vector<Value> brute_force(std::vector<Entry> entries, Key lo, Key hi) {
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
         return a.key < b.key || (a.key == b.key && a.value < b.value);
@@ -66,20 +80,32 @@ std::vector<Value> brute_force(std::vector<Entry> entries, Key lo, Key hi) {
     return out;
 }
 
-// e = prod (v^{-1} + s) sobre los valores dados.
+/*
+ * Calcula por separado el exponente que deberia tener un nodo:
+ * e = prod (v^{-1} + s) sobre los valores dados. Permite revisar que el
+ * arbol guarde g^e y Enc(e) correctos.
+ */
 NTL::ZZ_p exponent_of(const std::vector<Value>& values, const NTL::ZZ_p& s) {
     NTL::ZZ_p e(1);
     for (Value v : values) e *= ait::value_to_element(v) + s;
     return e;
 }
 
+/*
+ * Convierte valores de la columna en el conjunto {v^{-1}} que acumula el
+ * AIT. Sirve para calcular acumuladores con la clave publica (como lo haria
+ * el probador) y compararlos con los del arbol.
+ */
 aso::FieldSet inverses(const std::vector<Value>& values) {
     aso::FieldSet set;
     for (Value v : values) set.elements.push_back(ait::value_to_element(v));
     return set;
 }
 
-// Valores del subarbol con raiz en `index`.
+/*
+ * Agrega a `out` los valores de todas las hojas del subarbol con raiz en
+ * `index`, de izquierda a derecha.
+ */
 void subtree_values(const ait::Tree& tree, std::int32_t index, std::vector<Value>& out) {
     const ait::Node& n = tree.nodes()[static_cast<std::size_t>(index)];
     if (n.header.is_leaf) {
@@ -90,17 +116,30 @@ void subtree_values(const ait::Tree& tree, std::int32_t index, std::vector<Value
     subtree_values(tree, n.right, out);
 }
 
+/*
+ * Devuelve el logaritmo base 2 de n redondeado hacia arriba (el menor k con
+ * 2^k >= n). Se usa para comprobar que la cobertura de un rango nunca pase
+ * de 2 log2(n) nodos.
+ */
 std::size_t ceil_log2(std::size_t n) {
     std::size_t bits = 0;
     while ((std::size_t{1} << bits) < n) ++bits;
     return bits;
 }
 
-// Replica de single_d_verify del IntegriDB original (common_functions.cpp:28),
-// escrita con nuestras primitivas. Recibe los digests de los nodos que manda
-// el servidor (bi_digest), la cadena de uniones (bi_proof) y el resultado.
-// Notese que no recibe el digest delta: no hay nada que ate los nodos al
-// estado autenticado de la base.
+/*
+ * Replica de single_d_verify del IntegriDB original (common_functions.cpp:28),
+ * escrita con nuestras primitivas. Recibe los digests de los nodos que manda
+ * el servidor (bi_digest), la cadena de uniones (bi_proof) y el resultado.
+ *
+ * Notese que no recibe el digest delta: no hay nada que ate los nodos al
+ * estado autenticado de la base. La prueba la usa para demostrar que un
+ * servidor puede fabricar nodos que esta verificacion acepta, y que
+ * verify_range si los rechaza.
+ *
+ * Devuelve:
+ *   true si la verificacion original acepta.
+ */
 bool original_single_d_verify(const std::vector<bn::Ec1>& node_g1, const std::vector<bn::Ec2>& node_g2,
                               const std::vector<bn::Ec1>& bi_proof, const std::vector<aso::Element>& result,
                               const aso::PublicKey& pk, const crypto::PairingGroup& group) {
@@ -112,7 +151,11 @@ bool original_single_d_verify(const std::vector<bn::Ec1>& node_g1, const std::ve
     return aso::accumulate_g1(result, pk) == bi_proof.back();  // compute_digest_pub(result)
 }
 
-// Indice de la primera entrada de cobertura interna de la prueba (-1 si no hay).
+/*
+ * Devuelve el indice de la primera entrada de cobertura que sea un nodo
+ * interno, o -1 si no hay. Los ataques la usan para elegir que entrada
+ * alterar.
+ */
 long first_internal_cover(const ait::RangeProof& proof) {
     for (std::size_t i = 0; i < proof.entries.size(); ++i) {
         const ait::ProofEntry& e = proof.entries[i];
@@ -121,12 +164,26 @@ long first_internal_cover(const ait::RangeProof& proof) {
     return -1;
 }
 
+/*
+ * Atajo para las pruebas de ataques: indica si verify_range rechaza la
+ * prueba para el rango [lo, hi].
+ */
 bool rejected(const ait::Digest& root, Key lo, Key hi, const ait::RangeProof& proof) {
     return !ait::verify_range(root, lo, hi, proof).accepted;
 }
 
 }  // namespace
 
+/*
+ * Pruebas del Arbol de Intervalos Autenticado: forma del arbol contra las
+ * figuras del reporte, valores de los nodos (v_u = Enc(e_u) || g^{e_u}),
+ * claves duplicadas, determinismo, casos limite, 500 rangos aleatorios
+ * comparados con fuerza bruta, alteraciones de un probador malicioso (todas
+ * deben rechazarse) y el hueco del IntegriDB original.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
     const crypto::PairingGroup& group = crypto::init_pairing_group();
     const scheme::KeyPair keys = scheme::init(256);

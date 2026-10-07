@@ -18,18 +18,29 @@ constexpr std::uint8_t kTagEmptyTree = 0x03;
 
 }  // namespace
 
+/*
+ * Implementacion: etiqueta 0x02, los dos acumuladores en codificacion
+ * canonica y el cifrado con su longitud por delante.
+ */
 Digest payload_hash(const NodePayload& payload) {
     crypto::Sha256 h;
     h.u8(kTagPayload).point(payload.acc_g1).point(payload.acc_g2).length_prefixed(payload.enc);
     return h.finish();
 }
 
+/*
+ * Implementacion: etiqueta 0x00, clave (split_key), contador y H(v_u).
+ */
 Digest leaf_hash(const NodeHeader& header, const Digest& payload_digest) {
     crypto::Sha256 h;
     h.u8(kTagLeaf).i64(header.split_key).u64(header.count).digest(payload_digest);
     return h.finish();
 }
 
+/*
+ * Implementacion: etiqueta 0x01, clave minima, maxima y de division,
+ * contador, H(v_u) y los hashes de los dos hijos, en ese orden.
+ */
 Digest internal_hash(const NodeHeader& header, const Digest& payload_digest, const Digest& left,
                      const Digest& right) {
     crypto::Sha256 h;
@@ -44,12 +55,18 @@ Digest internal_hash(const NodeHeader& header, const Digest& payload_digest, con
     return h.finish();
 }
 
+/*
+ * Implementacion: hash de un solo byte con la etiqueta 0x03.
+ */
 Digest empty_tree_hash() {
     crypto::Sha256 h;
     h.u8(kTagEmptyTree);
     return h.finish();
 }
 
+/*
+ * Implementacion: rechaza el cero y calcula el inverso modular con NTL.
+ */
 NTL::ZZ_p value_to_element(Value v) {
     if (v == 0) {
         throw std::invalid_argument("AIT: el valor 0 no tiene inverso; la columna valor no puede contener 0");
@@ -57,12 +74,22 @@ NTL::ZZ_p value_to_element(Value v) {
     return NTL::inv(aso::to_field(v));
 }
 
+/*
+ * Implementacion: lo <= min y max <= hi.
+ */
 bool fully_inside(const NodeHeader& h, Key lo, Key hi) { return lo <= h.min_key && h.max_key <= hi; }
 
+/*
+ * Implementacion: las claves del hijo izquierdo van de min a split.
+ */
 bool left_child_outside(const NodeHeader& h, Key lo, Key hi) {
     return h.split_key < lo || h.min_key > hi;
 }
 
+/*
+ * Implementacion: las claves del hijo derecho son mayores que split y no
+ * pasan de max.
+ */
 bool right_child_outside(const NodeHeader& h, Key lo, Key hi) {
     return h.split_key >= hi || h.max_key < lo;
 }

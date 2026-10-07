@@ -12,6 +12,10 @@
 
 namespace tt::crypto {
 
+/*
+ * Implementacion: reserva el vector y lo llena con RAND_bytes, que devuelve
+ * 1 solo si pudo generar todos los bytes con entropia suficiente.
+ */
 std::vector<unsigned char> random_bytes(std::size_t count) {
     std::vector<unsigned char> out(count);
     if (count > 0 && RAND_bytes(out.data(), static_cast<int>(count)) != 1) {
@@ -20,6 +24,12 @@ std::vector<unsigned char> random_bytes(std::size_t count) {
     return out;
 }
 
+/*
+ * Implementacion: toma 64 bytes aleatorios (512 bits) y los reduce modulo r.
+ * Como 512 bits es mucho mas que los 254 bits de r, el resultado es
+ * practicamente uniforme. Si por azar sale cero, se repite. El buffer se
+ * borra de memoria antes de salir.
+ */
 NTL::ZZ_p random_nonzero_scalar() {
     init_pairing_group();  // fija el modulo r en este hilo
 

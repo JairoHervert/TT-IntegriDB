@@ -53,34 +53,61 @@ struct PublicKey {
     std::vector<bn::Ec1> g1_as_powers;  // g1^{a s^i}, i = 0..q
     bn::Ec2 g2_a;                       // g2^a
 
-    // Tamano maximo de un conjunto que se puede acumular con esta clave.
+    /*
+     * Tamano maximo de un conjunto que se puede acumular con esta clave: el
+     * numero de potencias menos uno (un polinomio de grado q tiene q + 1
+     * coeficientes). Devuelve 0 si la clave esta vacia.
+     */
     std::size_t q() const { return g1_s_powers.empty() ? 0 : g1_s_powers.size() - 1; }
 };
 
+// Par de claves que produce init().
 struct KeyPair {
     SecretKey sk;
     PublicKey pk;
 };
 
-// ASOInit. `q` es la cota superior del tamano de cualquier conjunto que se
-// autenticara; en el caso de estudio, al menos el numero de filas de la
-// tabla mas grande. Lanza std::invalid_argument si q = 0 o q > kMaxQ.
+/*
+ * ASOInit del reporte: genera la clave secreta (s, a) y la clave publica con
+ * todas las potencias necesarias.
+ *
+ * Parametros:
+ *   q  cota superior del tamano de cualquier conjunto que se autenticara;
+ *      en el caso de estudio, al menos el numero de filas de la tabla mas
+ *      grande.
+ *
+ * Devuelve:
+ *   El par (sk, pk). s y a salen de un generador criptografico y nunca
+ *   son cero.
+ *
+ * Errores:
+ *   Lanza std::invalid_argument si q = 0 o q > kMaxQ.
+ */
 KeyPair init(std::size_t q);
 
-// Revisa que pk tenga exactamente la estructura que produce init() para
-// algun s y algun a distintos de cero:
-//   - las tres listas tienen q + 1 puntos, todos en la curva y distintos de O;
-//   - los puntos de G2 estan en el subgrupo de orden r;
-//   - g1_s_powers[0] = g1 y g2_s_powers[0] = g2;
-//   - cada potencia es la anterior multiplicada por el mismo s, las de G1 y
-//     G2 coinciden, y las de extractabilidad usan el mismo a.
-// Las relaciones del ultimo punto se comprueban todas a la vez con una
-// combinacion lineal aleatoria (cinco combinaciones lineales y seis
-// emparejamientos en lugar de miles de emparejamientos): si alguna potencia
-// estuviera mal, la combinacion fallaria salvo con probabilidad de alrededor
-// de 2^-128. No necesita la clave secreta. Es costosa (del orden de lo que
-// tarda init) y esta pensada para pruebas y para la opcion --check del
-// propietario, no para cada carga de la clave.
+/*
+ * Revisa que pk tenga exactamente la estructura que produce init() para
+ * algun s y algun a distintos de cero, sin necesitar la clave secreta:
+ *   - las tres listas tienen q + 1 puntos, todos en la curva y distintos de O;
+ *   - los puntos de G2 estan en el subgrupo de orden r;
+ *   - g1_s_powers[0] = g1 y g2_s_powers[0] = g2;
+ *   - cada potencia es la anterior multiplicada por el mismo s, las de G1 y
+ *     G2 coinciden, y las de extractabilidad usan el mismo a.
+ *
+ * Las relaciones del ultimo punto se comprueban todas a la vez con una
+ * combinacion lineal aleatoria (cinco combinaciones lineales y seis
+ * emparejamientos en lugar de miles de emparejamientos): si alguna potencia
+ * estuviera mal, la combinacion fallaria salvo con probabilidad de alrededor
+ * de 2^-128. Es costosa (del orden de lo que tarda init) y esta pensada para
+ * pruebas y para la opcion --check del propietario, no para cada carga de la
+ * clave.
+ *
+ * Parametros:
+ *   pk  clave publica a revisar
+ *
+ * Devuelve:
+ *   true si la clave es valida.
+ */
 bool is_well_formed(const PublicKey& pk);
 
 }  // namespace tt::aso

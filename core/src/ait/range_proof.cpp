@@ -18,17 +18,46 @@ namespace {
 // prueba maliciosa con miles de nodos anidados agote la pila.
 constexpr int kMaxDepth = 128;
 
+/*
+ * Excepcion interna para abandonar la verificacion en cuanto algo no cuadra.
+ * verify_range la atrapa y la convierte en un rechazo con su motivo.
+ */
 class Rejected : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
 
+/*
+ * Recorre una prueba de RangeCover en preorden, recalculando los hashes de
+ * abajo hacia arriba y aplicando las reglas de forma canonica. Guarda en
+ * `out` los nodos de cobertura que va encontrando.
+ */
 class ProofChecker {
 public:
+    /*
+     * Prepara la revision de `proof` para el rango [lo, hi].
+     */
     ProofChecker(const RangeProof& proof, Key lo, Key hi, RangeVerification& out)
         : proof_(proof), lo_(lo), hi_(hi), out_(out) {}
 
-    // Recalcula el hash del subarbol que empieza en la siguiente entrada.
+    /*
+     * Lee el subarbol que empieza en la siguiente entrada y devuelve su hash
+     * recalculado. Aplica las reglas:
+     *   - un nodo no puede venir podado si su padre no justifico la poda;
+     *   - un nodo de cobertura debe estar completo dentro del rango;
+     *   - un nodo completo dentro del rango debe venir como cobertura;
+     *   - en un nodo expandido, cada hijo se poda si y solo si las reglas de
+     *     node.hpp lo justifican.
+     *
+     * Parametros:
+     *   depth  profundidad actual, para rechazar pruebas anidadas sin fin
+     *
+     * Devuelve:
+     *   El hash del subarbol.
+     *
+     * Errores:
+     *   Lanza Rejected si la prueba viola alguna regla.
+     */
     Digest node(int depth) {
         if (depth > kMaxDepth) throw Rejected("la prueba es mas profunda que cualquier AIT valido");
         const ProofEntry& e = next();
@@ -65,14 +94,31 @@ public:
         return internal_hash(h, e.payload_digest, left, right);
     }
 
+    /*
+     * Indica si ya se leyeron todas las entradas (una prueba valida no deja
+     * entradas sin usar).
+     */
     bool consumed_all() const { return pos_ == proof_.entries.size(); }
 
 private:
+    /*
+     * Devuelve la siguiente entrada de la prueba y avanza.
+     *
+     * Errores:
+     *   Lanza Rejected si la prueba ya no tiene mas entradas.
+     */
     const ProofEntry& next() {
         if (pos_ >= proof_.entries.size()) throw Rejected("la prueba termina antes de tiempo");
         return proof_.entries[pos_++];
     }
 
+    /*
+     * Lee un subarbol que debe venir podado (el padre demostro que esta fuera
+     * del rango) y devuelve su hash.
+     *
+     * Errores:
+     *   Lanza Rejected si la entrada no es de tipo podado.
+     */
     Digest pruned() {
         const ProofEntry& e = next();
         if (e.kind != EntryKind::kPruned) {
@@ -82,8 +128,15 @@ private:
         return e.hash;
     }
 
-    // Forma basica del encabezado. El hash ya lo autentica; esto solo
-    // rechaza antes y con un mensaje claro los encabezados imposibles.
+    /*
+     * Revisa la forma basica de un encabezado: una hoja tiene min = max =
+     * clave; un nodo interno cumple min <= clave < max y tiene al menos dos
+     * filas. El hash ya autentica el encabezado; esto solo rechaza antes, y con
+     * un mensaje claro, los encabezados imposibles.
+     *
+     * Errores:
+     *   Lanza Rejected si el encabezado no tiene una forma valida.
+     */
     static void check_shape(const NodeHeader& h) {
         if (h.count == 0) throw Rejected("nodo sin filas");
         if (h.is_leaf) {
@@ -104,6 +157,12 @@ private:
 
 }  // namespace
 
+/*
+ * Implementacion: una prueba vacia solo vale para el arbol vacio; si no,
+ * ProofChecker recalcula el hash de la raiz, se exige que no sobren entradas
+ * y que el hash coincida con el digest. Ante cualquier rechazo se descarta
+ * todo lo leido y se guarda el motivo.
+ */
 RangeVerification verify_range(const Digest& root_digest, Key lo, Key hi, const RangeProof& proof) {
     if (lo > hi) throw std::invalid_argument("AIT: rango invalido, lo > hi");
 

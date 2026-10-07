@@ -14,6 +14,16 @@
 #include "tt/crypto/pairing_group.hpp"
 #include "tt/crypto/random.hpp"
 
+/*
+ * Pruebas del grupo bilineal y de la aleatoriedad: parametros de BN254
+ * (orden r, generadores validos), propiedades del emparejamiento
+ * (bilinealidad, no degeneracion), que init_pairing_group funcione en
+ * varios hilos, generacion de escalares aleatorios y combinaciones lineales
+ * de puntos.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
     using tt::crypto::pairing;
     using tt::crypto::to_vuint;
@@ -72,8 +82,12 @@ int main() {
 
     section("Combinacion lineal");
     {
-        // Escalares como mie::Vuint (sin signo): con int, ate-pairing hace un
-        // corrimiento de bits con signo que es comportamiento indefinido.
+        /*
+         * Devuelve k * g1. Atajo para construir puntos conocidos y comparar
+         * resultados de linear_combination. El escalar se pasa como
+         * mie::Vuint (sin signo): con int, ate-pairing hace un corrimiento de
+         * bits con signo que es comportamiento indefinido.
+         */
         const auto times = [&](unsigned k) { return group.g1 * mie::Vuint(k); };
         const std::vector<bn::Ec1> bases = {group.g1, times(2), times(3)};
         std::vector<NTL::ZZ_p> scalars = {NTL::ZZ_p(5), NTL::ZZ_p(0), NTL::ZZ_p(1)};

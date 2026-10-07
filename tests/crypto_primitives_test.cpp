@@ -17,6 +17,15 @@
 #include "tt/crypto/random.hpp"
 #include "tt/crypto/symmetric.hpp"
 
+/*
+ * Pruebas de las primitivas criptograficas: SHA-256 con codificacion
+ * canonica (vectores conocidos, separacion de campos), Enc (AES-128-CBC con
+ * IV sintetico: determinismo, descifrado y deteccion de alteraciones) y la
+ * conversion de escalares a 32 bytes y de regreso.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
     using namespace tt;
     using test::check;

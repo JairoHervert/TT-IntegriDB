@@ -2,6 +2,7 @@
 #
 # Estructura:
 #   core/      biblioteca compartida con el esquema (sin MySQL ni red)
+#   mysql/     adaptador de MySQL (libmysqlclient) para leer la base
 #   owner/     Propietario de datos: Init + Setup (se ejecuta una vez)
 #   prover/    modulo probador (bloque Servidor)
 #   verifier/  Cliente SQL + modulo verificador (bloque Cliente)
@@ -37,7 +38,7 @@ find_path(ATE_PAIRING_INCLUDE_DIR bn.h
 find_library(ATE_PAIRING_LIB zm
              PATHS "${ATE_PAIRING_DIR}/lib" NO_DEFAULT_PATH REQUIRED)
 
-# libntl-dev, libgmp-dev y libssl-dev (apt)
+# libntl-dev, libgmp-dev, libssl-dev y libmysqlclient-dev (apt)
 find_library(NTL_LIB ntl REQUIRED)
 find_library(GMP_LIB gmp REQUIRED)
 find_library(GMPXX_LIB gmpxx REQUIRED)
@@ -57,6 +58,7 @@ set(TT_WARNINGS -Wall -Wextra)
 
 # --- Modulos ----------------------------------------------------------------
 add_subdirectory(core)
+add_subdirectory(mysql)
 add_subdirectory(owner)
 add_subdirectory(prover)
 add_subdirectory(verifier)

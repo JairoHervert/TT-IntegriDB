@@ -15,11 +15,18 @@ core/                     núcleo compartido: el esquema (sin MySQL ni red)
   include/tt/aso/           claves y acumulador del bloque ASO
   include/tt/ait/           árbol de intervalos autenticado: Setup,
                             RangeCover/Search y su verificación
-  include/tt/scheme/        Init del esquema y archivos de claves
-owner/                    Propietario de datos: Init (Setup pendiente)
+  include/tt/db/            modelo de tablas y filas, hash de fila y el
+                            puerto de lectura de la base (db::Source)
+  include/tt/merkle/        árbol de Merkle de las filas de cada tabla
+  include/tt/io/            archivos binarios y escritura atómica
+  include/tt/scheme/        Init, Setup, digest δ, base autenticada D~,
+                            planes de árboles y archivos de claves
+mysql/                    adaptador de MySQL (libmysqlclient) para leer la base
+owner/                    Propietario de datos: init, setup y catalog
 prover/                   módulo probador (bloque Servidor)
 verifier/                 Cliente SQL + módulo verificador (bloque Cliente)
-tests/                    pruebas del núcleo
+tests/                    pruebas del núcleo y del adaptador
+docs/setup.md             decisiones de Setup y su justificación
 ```
 
 Los datos incluyen 5 carreras (ISC, IIA, LCD, ITI, ICS), cada una con su
@@ -32,7 +39,9 @@ lógica. Cada alumno cursa solo materias de su carrera y en orden.
 Toda la lógica criptográfica del esquema vive en `core/`, que es una
 biblioteca sin dependencias de MySQL ni de red. Los tres programas
 (`owner`, `prover`, `verifier`) son delgados: leen o escriben datos
-(MySQL, archivos, red) y llaman al núcleo. Así cada función del esquema
+(MySQL, archivos, red) y llaman al núcleo. La lectura de la base entra al
+núcleo por un puerto (`db::Source`); el adaptador de MySQL está en
+`mysql/` y las pruebas usan uno en memoria. Así cada función del esquema
 (Init, Setup, ProofGen, Verify) se puede probar por separado (RNF02) y los
 tres actores quedan separados (RNF01).
 
@@ -44,7 +53,7 @@ verificador trabajan con la clave pública `pk`.
 Dependencias, una sola vez:
 
 ```bash
-sudo apt install build-essential cmake git libgmp-dev libntl-dev libssl-dev
+sudo apt install build-essential cmake git libgmp-dev libntl-dev libssl-dev libmysqlclient-dev
 git clone https://github.com/herumi/ate-pairing.git ~/ate-pairing
 make -C ~/ate-pairing/src
 ```
@@ -64,6 +73,13 @@ ctest --test-dir build --output-on-failure
 Los ejecutables quedan en `build/owner/tt_owner`, `build/prover/tt_prover`
 y `build/verifier/tt_verifier`. Si ate-pairing está en otra ruta:
 `cmake -S . -B build -DATE_PAIRING_DIR=/otra/ruta`.
+
+`ctest` no necesita MySQL. La prueba del adaptador contra la base real es
+opcional; con la base levantada:
+
+```bash
+TT_TEST_MYSQL=1 TT_DB_PASS=app_pass_2026 ctest --test-dir build -R mysql --output-on-failure
+```
 
 ## Generar las claves (algoritmo Init)
 
@@ -85,6 +101,34 @@ y `build/verifier/tt_verifier`. Si ate-pairing está en otra ruta:
 Referencia medida en la VM de pruebas (Ubuntu 26.04, GCC 15.2, un solo
 hilo, q = 16000): Init 6.26 s, comprobación de estructura 6.84 s, guardado
 0.27 s, `public_key.txt` de 9.4 MB.
+
+## Construir la base autenticada (algoritmo Setup)
+
+Con la base levantada (ver "Levantar la base de datos") y las claves de
+Init:
+
+```bash
+export TT_DB_PASS=app_pass_2026
+./build/owner/tt_owner setup                # plan queries (por defecto)
+./build/owner/tt_owner setup --trees full --out setup_full
+./build/owner/tt_owner catalog              # consultas del catálogo y sus árboles
+```
+
+- Lee la base de MySQL con una instantánea consistente. Los datos de
+  conexión salen de `TT_DB_HOST` (127.0.0.1), `TT_DB_PORT` (3306),
+  `TT_DB_USER` (app_user), `TT_DB_NAME` (academic_db) y `TT_DB_PASS`
+  (obligatoria; no hay contraseña escrita en el código).
+- Escribe `setup/authenticated_db.bin` (D~, para el servidor) y
+  `setup/delta.txt` (δ, público, para el verificador). Sin `--force` no
+  reemplaza un estado existente. Ninguno de los dos se sube al repositorio.
+- Muestra el tiempo de cada estructura (RF16) y el id del estado.
+- `--trees queries` construye solo los 11 árboles AIT que usan las
+  consultas del catálogo; `--trees full` construye los 57 del algoritmo del
+  reporte (todos los pares de columnas enteras). La justificación completa,
+  con el catálogo y los costos medidos, está en `docs/setup.md`.
+
+Referencia medida en la VM de pruebas (base por defecto, q = 16000):
+`queries` 1.24 s y D~ de 2.5 MB; `full` 56.54 s y D~ de 64.1 MB.
 
 ## Árbol de intervalos autenticado (AIT)
 
