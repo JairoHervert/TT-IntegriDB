@@ -1,10 +1,10 @@
 // cli.cpp
 
-#include "cli.hpp"
+#include "tt/cli/cli.hpp"
 
 #include <cstdio>
 
-namespace tt::owner {
+namespace tt::cli {
 
 /*
  * Implementacion: diferencia de relojes convertida a segundos.
@@ -24,8 +24,8 @@ const std::string& option_value(const std::vector<std::string>& args, std::size_
 /*
  * Implementacion: elige la unidad segun el tamano y usa un decimal.
  */
-std::string file_size_text(const std::filesystem::path& path) {
-    const double bytes = static_cast<double>(std::filesystem::file_size(path));
+std::string size_text(std::size_t size) {
+    const double bytes = static_cast<double>(size);
     char text[32];
     if (bytes < 1024) {
         std::snprintf(text, sizeof text, "%.0f B", bytes);
@@ -37,4 +37,11 @@ std::string file_size_text(const std::filesystem::path& path) {
     return text;
 }
 
-}  // namespace tt::owner
+/*
+ * Implementacion: lee el tamano del archivo y usa size_text.
+ */
+std::string file_size_text(const std::filesystem::path& path) {
+    return size_text(static_cast<std::size_t>(std::filesystem::file_size(path)));
+}
+
+}  // namespace tt::cli

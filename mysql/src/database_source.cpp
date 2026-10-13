@@ -20,13 +20,6 @@ struct PendingTable {
 };
 
 /*
- * Pone un identificador entre comillas invertidas para usarlo en SQL. Solo
- * se llama con nombres que ya pasaron db::is_valid_identifier, que no
- * pueden contener comillas.
- */
-std::string quoted(const std::string& identifier) { return "`" + identifier + "`"; }
-
-/*
  * Devuelve el texto de un campo que no puede ser NULL (los de
  * information_schema que se consultan aqui).
  *
@@ -116,30 +109,11 @@ std::vector<db::TableSchema> read_schemas(Connection& c) {
  *   Lanza db::DataError si llega un NULL o un entero invalido.
  */
 db::Table read_table(Connection& c, const db::TableSchema& schema) {
-    std::string sql = "SELECT ";
-    for (std::size_t i = 0; i < schema.columns.size(); ++i) sql += (i ? ", " : "") + quoted(schema.columns[i].name);
-    sql += " FROM " + quoted(schema.name) + " ORDER BY " + quoted(schema.columns[schema.reference_column].name);
+    const std::string sql = select_columns_sql(schema) + " ORDER BY " +
+                            quoted_identifier(schema.columns[schema.reference_column].name);
 
     db::Table table{schema, {}};
-    c.query(sql, [&](const std::vector<Field>& f) {
-        db::Row row;
-        row.reserve(f.size());
-        for (std::size_t i = 0; i < f.size(); ++i) {
-            const db::Column& column = schema.columns[i];
-            if (!f[i]) throw db::DataError("tabla " + schema.name + ", columna " + column.name + ": valor NULL");
-            if (column.type == db::ColumnType::kText) {
-                row.emplace_back(*f[i]);
-                continue;
-            }
-            std::int64_t v = 0;
-            if (!parse_mysql_integer(*f[i], v)) {
-                throw db::DataError("tabla " + schema.name + ", columna " + column.name + ": el valor '" + *f[i] +
-                                    "' no es un entero de 64 bits");
-            }
-            row.emplace_back(v);
-        }
-        table.rows.push_back(std::move(row));
-    });
+    c.query(sql, [&](const std::vector<Field>& f) { table.rows.push_back(row_from_fields(schema, f)); });
     return table;
 }
 
@@ -205,6 +179,50 @@ bool parse_mysql_integer(const std::string& text, std::int64_t& out) {
         out = static_cast<std::int64_t>(v);
     }
     return true;
+}
+
+/*
+ * Implementacion: comillas invertidas alrededor del nombre.
+ */
+std::string quoted_identifier(const std::string& identifier) { return "`" + identifier + "`"; }
+
+/*
+ * Implementacion: lista las columnas en el orden de la estructura.
+ */
+std::string select_columns_sql(const db::TableSchema& schema) {
+    std::string sql = "SELECT ";
+    for (std::size_t i = 0; i < schema.columns.size(); ++i) {
+        sql += (i ? ", " : "") + quoted_identifier(schema.columns[i].name);
+    }
+    return sql + " FROM " + quoted_identifier(schema.name);
+}
+
+/*
+ * Implementacion: exige un campo por columna, rechaza NULL y convierte los
+ * enteros con parse_mysql_integer; el texto se copia tal cual.
+ */
+db::Row row_from_fields(const db::TableSchema& schema, const std::vector<Field>& fields) {
+    if (fields.size() != schema.columns.size()) {
+        throw db::DataError("tabla " + schema.name + ": MySQL devolvio " + std::to_string(fields.size()) +
+                            " columnas y la estructura tiene " + std::to_string(schema.columns.size()));
+    }
+    db::Row row;
+    row.reserve(fields.size());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        const db::Column& column = schema.columns[i];
+        if (!fields[i]) throw db::DataError("tabla " + schema.name + ", columna " + column.name + ": valor NULL");
+        if (column.type == db::ColumnType::kText) {
+            row.emplace_back(*fields[i]);
+            continue;
+        }
+        std::int64_t v = 0;
+        if (!parse_mysql_integer(*fields[i], v)) {
+            throw db::DataError("tabla " + schema.name + ", columna " + column.name + ": el valor '" + *fields[i] +
+                                "' no es un entero de 64 bits");
+        }
+        row.emplace_back(v);
+    }
+    return row;
 }
 
 }  // namespace tt::mysql

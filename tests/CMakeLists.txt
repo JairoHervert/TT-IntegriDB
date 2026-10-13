@@ -18,6 +18,8 @@ tt_add_test(merkle_test)
 tt_add_test(tree_plan_test)
 tt_add_test(setup_test)
 tt_add_test(state_io_test)
+tt_add_test(query_test)
+tt_add_test(selection_test)
 tt_add_test(mysql_source_test)
 target_link_libraries(mysql_source_test PRIVATE tt_mysql)
 
@@ -36,3 +38,11 @@ set_tests_properties(owner_init_refuses_overwrite PROPERTIES
 add_test(NAME owner_catalog COMMAND tt_owner catalog)
 add_test(NAME owner_setup_rejects_unknown_plan COMMAND tt_owner setup --trees consultas)
 set_tests_properties(owner_setup_rejects_unknown_plan PROPERTIES WILL_FAIL TRUE)
+
+# Comandos del probador y del verificador: una consulta mal escrita es un
+# error de uso, que se informa antes de tocar archivos o MySQL. El
+# recorrido completo necesita MySQL y se prueba a mano (ver README).
+add_test(NAME prover_rejects_unknown_query COMMAND tt_prover answer C99 1)
+set_tests_properties(prover_rejects_unknown_query PROPERTIES PASS_REGULAR_EXPRESSION "consulta desconocida 'C99'")
+add_test(NAME verifier_rejects_inverted_range COMMAND tt_verifier verify C4 8 6)
+set_tests_properties(verifier_rejects_inverted_range PROPERTIES PASS_REGULAR_EXPRESSION "el rango esta invertido")

@@ -39,6 +39,9 @@ setup_*/
 authenticated_db*.bin
 delta*.txt
 
+# --- Respuestas generadas por tt_prover answer ---
+respuesta*.bin
+
 # --- Claves generadas por tt_owner init ---
 # La clave secreta sk_D nunca debe subirse; la publica se regenera con Init
 # y pesa varios MB, asi que tampoco va al repositorio.

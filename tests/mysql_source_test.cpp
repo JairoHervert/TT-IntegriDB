@@ -17,6 +17,7 @@
 #include "test_support.hpp"
 #include "tt/db/row_hash.hpp"
 #include "tt/mysql/database_source.hpp"
+#include "tt/mysql/row_store.hpp"
 #include "tt/scheme/tree_plan.hpp"
 
 namespace {
@@ -112,5 +113,31 @@ int main() {
     check(all_row_hashes(source.read()) == all_row_hashes(first), "dos lecturas dan exactamente las mismas filas");
     tt::scheme::plan_trees(tt::scheme::Preset::kQueries, schemas);
     check(true, "el plan queries se puede aplicar a esta base");
+
+    section("Filas por referencia para el probador (TT_TEST_MYSQL=1)");
+    {
+        // Algunas filas de cada tabla, pedidas en orden inverso: deben llegar
+        // iguales a las de la lectura completa y en el orden pedido.
+        tt::mysql::DatabaseRowStore store(tt::mysql::ConnectionConfig::from_environment());
+        bool same = true;
+        for (const tt::db::Table& t : first.tables) {
+            std::vector<std::int64_t> refs;
+            std::vector<tt::db::Row> expected;
+            for (std::size_t i = t.rows.size(); i-- > 0 && refs.size() < 2500;) {
+                refs.push_back(std::get<std::int64_t>(t.rows[i][t.schema.reference_column]));
+                expected.push_back(t.rows[i]);
+            }
+            if (store.fetch_rows(t.schema, refs) != expected) same = false;
+        }
+        check(same, "las filas pedidas por referencia (en bloques de 1000) son las de la base, en el orden pedido");
+        check(store.fetch_rows(first.tables[0].schema, {}).empty(), "sin referencias no se consulta nada");
+        bool missing = false;
+        try {
+            store.fetch_rows(first.tables[0].schema, {std::numeric_limits<std::int64_t>::max()});
+        } catch (const tt::db::DataError&) {
+            missing = true;
+        }
+        check(missing, "una referencia que no existe se informa como error");
+    }
     return tt::test::finish();
 }

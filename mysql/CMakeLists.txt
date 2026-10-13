@@ -1,6 +1,7 @@
 # Adaptador MySQL (libmysqlclient): conexion y lectura de la base para el
-# propietario. Esta separado del nucleo para que tt_core no dependa de la
-# base de datos ni de la red.
+# propietario (Setup) y para el probador (filas de cada respuesta). Esta
+# separado del nucleo para que tt_core no dependa de la base de datos ni de
+# la red.
 #
 # Requiere:  sudo apt install libmysqlclient-dev
 
@@ -14,6 +15,7 @@ endif()
 add_library(tt_mysql STATIC
   src/connection.cpp
   src/database_source.cpp
+  src/row_store.cpp
 )
 
 target_include_directories(tt_mysql PUBLIC include PRIVATE ${MYSQL_INCLUDE_DIR})

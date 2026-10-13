@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "tt/db/source.hpp"
 #include "tt/mysql/connection.hpp"
@@ -78,5 +79,28 @@ std::optional<db::ColumnType> column_type_from_mysql(const std::string& data_typ
  *   true y el valor en `out` si el texto es valido.
  */
 bool parse_mysql_integer(const std::string& text, std::int64_t& out);
+
+/*
+ * Pone un identificador entre comillas invertidas para usarlo en SQL. Solo
+ * se llama con nombres que ya pasaron db::is_valid_identifier, que no
+ * pueden contener comillas.
+ */
+std::string quoted_identifier(const std::string& identifier);
+
+/*
+ * Arma "SELECT <columnas en orden> FROM <tabla>" para una estructura, de
+ * modo que cada fila llegue con las celdas en el orden del esquema.
+ */
+std::string select_columns_sql(const db::TableSchema& schema);
+
+/*
+ * Convierte una fila de resultado de MySQL en una fila del esquema, segun
+ * el tipo de cada columna.
+ *
+ * Errores:
+ *   Lanza db::DataError si el numero de campos no coincide, si llega un
+ *   NULL o si un entero no cabe en 64 bits.
+ */
+db::Row row_from_fields(const db::TableSchema& schema, const std::vector<Field>& fields);
 
 }  // namespace tt::mysql

@@ -2,6 +2,7 @@
 #
 # Estructura:
 #   core/      biblioteca compartida con el esquema (sin MySQL ni red)
+#   cli/       utilidades de linea de comandos de los tres programas
 #   mysql/     adaptador de MySQL (libmysqlclient) para leer la base
 #   owner/     Propietario de datos: Init + Setup (se ejecuta una vez)
 #   prover/    modulo probador (bloque Servidor)
@@ -58,6 +59,7 @@ set(TT_WARNINGS -Wall -Wextra)
 
 # --- Modulos ----------------------------------------------------------------
 add_subdirectory(core)
+add_subdirectory(cli)
 add_subdirectory(mysql)
 add_subdirectory(owner)
 add_subdirectory(prover)
