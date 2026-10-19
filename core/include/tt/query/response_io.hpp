@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "tt/query/selection.hpp"
+#include "tt/query/multirange.hpp"
 
 namespace tt::query {
 
@@ -73,5 +74,12 @@ std::size_t save_response(const std::filesystem::path& path, const SelectionResp
  *   la ruta) si el contenido no es valido.
  */
 SelectionResponse load_response(const std::filesystem::path& path);
+
+
+// Tipo 2 del formato TTRSP: preserva sin cambios el formato tipo 1 de C1-C6.
+std::vector<unsigned char> encode_multirange_response(const MultiRangeResponse& response);
+MultiRangeResponse decode_multirange_response(const std::vector<unsigned char>& data);
+std::size_t save_multirange_response(const std::filesystem::path& path, const MultiRangeResponse& response);
+MultiRangeResponse load_multirange_response(const std::filesystem::path& path);
 
 }  // namespace tt::query

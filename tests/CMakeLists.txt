@@ -20,6 +20,7 @@ tt_add_test(setup_test)
 tt_add_test(state_io_test)
 tt_add_test(query_test)
 tt_add_test(selection_test)
+tt_add_test(multirange_test)
 tt_add_test(mysql_source_test)
 target_link_libraries(mysql_source_test PRIVATE tt_mysql)
 

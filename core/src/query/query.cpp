@@ -15,6 +15,7 @@ const char* const kQueryForms =
     "      C4 <min> <max>                SELECT * FROM academic_record WHERE grade BETWEEN <min> AND <max>\n"
     "      C5 <periodo1> <periodo2>      SELECT * FROM academic_record WHERE term_code BETWEEN ...\n"
     "      C6 <periodo1> <periodo2>      SELECT * FROM student WHERE admission_term BETWEEN ...\n"
+    "      C7 <grade_min> <grade_max> <term_min> <term_max>   rango multidimensional (ASO)\n"
     "      range <tabla> <columna> <min> <max>   rango en cualquier columna entera\n"
     "      (los periodos se escriben como en la base, por ejemplo 20241 = 2024-1)\n";
 
@@ -105,6 +106,16 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         check_bounds(out.query);
         return out;
     }
+    if (words[0] == "C7") {
+        expect_words(words, 5, "C7 <grade_min> <grade_max> <term_min> <term_max>");
+        out.catalog_id = "C7";
+        out.query = RangeQuery{"academic_record", "grade", parse_integer(words[1]), parse_integer(words[2])};
+        RangeQuery second{"academic_record", "term_code", parse_integer(words[3]), parse_integer(words[4])};
+        check_bounds(out.query);
+        check_bounds(second);
+        out.multi = MultiRangeQuery{out.query, second};
+        return out;
+    }
     for (const CatalogForm& f : kCatalogForms) {
         if (words[0] != f.id) continue;
         out.catalog_id = f.id;
@@ -122,7 +133,7 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         return out;
     }
     throw QueryError("consulta desconocida '" + words[0] +
-                     "'; por ahora se verifican C1 a C6 (seleccion y rango) y 'range'");
+                     "'; por ahora se verifican C1 a C7 y 'range'");
 }
 
 /*
@@ -138,6 +149,13 @@ std::string to_sql(const RangeQuery& q) {
  * Implementacion: localiza la tabla en delta, revisa la columna y busca el
  * arbol (columna -> referencia) entre los arboles publicados.
  */
+std::string to_sql(const MultiRangeQuery& q) {
+    return "SELECT * FROM " + q.first.table + " WHERE " + q.first.column + " BETWEEN " +
+           std::to_string(q.first.lo) + " AND " + std::to_string(q.first.hi) + " AND " +
+           q.second.column + " BETWEEN " + std::to_string(q.second.lo) + " AND " +
+           std::to_string(q.second.hi);
+}
+
 scheme::TreeSpec selection_tree(const RangeQuery& q, const scheme::DatabaseDigest& digest) {
     const scheme::TableDigest* table = digest.find_table(q.table);
     if (table == nullptr) throw UnsupportedQuery("la tabla " + q.table + " no existe en el estado autenticado");

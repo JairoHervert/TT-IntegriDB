@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -46,10 +47,20 @@ struct RangeQuery {
     bool is_equality() const { return lo == hi; }
 };
 
+// C7: interseccion de dos rangos sobre una misma tabla.
+struct MultiRangeQuery {
+    RangeQuery first;
+    RangeQuery second;
+    bool operator==(const MultiRangeQuery& o) const {
+        return first == o.first && second == o.second;
+    }
+};
+
 // Una consulta leida de la linea de comandos.
 struct ParsedQuery {
-    std::string catalog_id;  // C1 ... C6, o vacio si se escribio con "range"
+    std::string catalog_id;  // C1 ... C7, o vacio si se escribio con "range"
     RangeQuery query;
+    std::optional<MultiRangeQuery> multi;  // presente solo para C7
 };
 
 // La consulta esta mal escrita (forma desconocida, numero invalido, lo > hi...).
@@ -77,6 +88,7 @@ extern const char* const kQueryForms;
  *   C4 <min> <max>             academic_record, grade en un intervalo
  *   C5 <periodo1> <periodo2>   academic_record, term_code en un intervalo
  *   C6 <periodo1> <periodo2>   student, admission_term en un intervalo
+ *   C7 <gmin> <gmax> <tmin> <tmax>        interseccion ASO
  *   range <tabla> <columna> <min> <max>   cualquier rango en una columna
  *
  * Parametros:
@@ -99,6 +111,7 @@ ParsedQuery parse_query(const std::vector<std::string>& words);
  *   Por ejemplo "SELECT * FROM academic_record WHERE grade BETWEEN 6 AND 8".
  */
 std::string to_sql(const RangeQuery& query);
+std::string to_sql(const MultiRangeQuery& query);
 
 /*
  * Determina el AIT con el que se verifica la consulta: (columna filtrada ->

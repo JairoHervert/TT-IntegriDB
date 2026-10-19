@@ -1,0 +1,230 @@
+#include "tt/query/multirange.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <stdexcept>
+#include <unordered_set>
+#include <utility>
+#include <array>
+#include <unordered_map>
+
+#include "tt/ait/node.hpp"
+#include "tt/crypto/pairing_group.hpp"
+#include "tt/db/row_hash.hpp"
+
+namespace tt::query {
+namespace {
+using Clock = std::chrono::steady_clock;
+double elapsed(Clock::time_point t) {
+    return std::chrono::duration<double>(Clock::now() - t).count();
+}
+class Rejected : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+// Orden de los nodos de RangeCover = orden de los identificadores de tree->range.
+std::vector<ait::CoverNode> covers(const ait::RangeProof& proof) {
+    std::vector<ait::CoverNode> out;
+    for (const auto& e : proof.entries) {
+        if (e.kind == ait::EntryKind::kCover) out.push_back({e.header, e.payload});
+    }
+    return out;
+}
+
+// Los IDs del AIT se acumulan como inversos en Z_r, no como enteros.
+aso::FieldSet elements(const std::vector<std::int64_t>& refs) {
+    aso::FieldSet s;
+    s.elements.reserve(refs.size());
+    for (std::int64_t v : refs) s.elements.push_back(ait::value_to_element(v));
+    return s;
+}
+
+bool in_node(const ait::NodeHeader& h, std::int64_t key) {
+    return h.min_key <= key && key <= h.max_key;
+}
+
+// En cada AIT los nodos de cobertura tienen intervalos disjuntos;
+// el valor de la columna de la fila permite asignarla al nodo correcto.
+std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
+                                         std::size_t key_column, const ait::NodeHeader& h,
+                                         std::size_t reference_column) {
+    std::vector<std::int64_t> ids;
+    for (const RowProof& r : rows) {
+        if (in_node(h, std::get<std::int64_t>(r.row[key_column]))) {
+            ids.push_back(std::get<std::int64_t>(r.row[reference_column]));
+        }
+    }
+    return ids;
+}
+
+void check_c7_shape(const MultiRangeQuery& q) {
+    if (q.first.table != "academic_record" || q.second.table != "academic_record" ||
+        q.first.column != "grade" || q.second.column != "term_code" ||
+        q.first.lo > q.first.hi || q.second.lo > q.second.hi) {
+        throw UnsupportedQuery("C7 solo admite academic_record: grade y term_code con intervalos validos");
+    }
+}
+}  // namespace
+
+MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
+                                  const scheme::DatabaseDigest& digest,
+                                  const aso::PublicKey& pk, const MultiRangeQuery& q,
+                                  db::RowStore& store) {
+    check_c7_shape(q);
+    MultiRangeAnswer ans;
+    const std::array<RangeQuery, 2> queries = {q.first, q.second};
+    const auto* tab = adb.find_table(q.first.table);
+    if (!tab) throw ProverError("D~ no tiene la tabla academic_record");
+    std::array<ait::RangeAnswer, 2> ranged;
+    for (int k = 0; k < 2; ++k) {
+        ans.trees[k] = selection_tree(queries[k], digest);
+        const auto* tree = adb.find_tree(ans.trees[k]);
+        if (!tree) throw ProverError("D~ no contiene el AIT " + ans.trees[k].label());
+        ranged[k] = tree->range(queries[k].lo, queries[k].hi);
+        ans.input_counts[k] = ranged[k].values.size();
+        ans.response.ranges[k] = std::move(ranged[k].proof);
+    }
+    // El orden de salida es el del AIT de calificaciones.
+    const std::unordered_set<std::int64_t> second_ids(ranged[1].values.begin(), ranged[1].values.end());
+    std::vector<std::int64_t> common;
+    for (std::int64_t id : ranged[0].values) {
+        if (second_ids.count(id)) common.push_back(id);
+    }
+    std::vector<db::Row> rows = store.fetch_rows(tab->schema, common);
+    if (rows.size() != common.size()) throw ProverError("MySQL omitio filas de la interseccion C7");
+    auto& response = ans.response;
+    response.state_id = digest.id();
+    response.query = q;
+    // const std::size_t ref = tab->schema.reference_column;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto position = tab->position_of(common[i]);
+        if (!position) throw ProverError("D~ no contiene la fila de la interseccion");
+        if (db::row_hash(tab->schema, rows[i]) != tab->rows.leaves()[*position]) ++ans.stale_rows;
+        response.rows.push_back({std::move(rows[i]), tab->rows.prove(*position)});
+    }
+
+    // Para cada nodo autentico se calcula el complemento D = N \ (N interseccion R).
+    // El testigo de split prueba que el resto junto a los IDs publicados
+    // reproduce exactamente el acumulador del nodo autenticado por delta.
+    std::array<std::vector<aso::FieldSet>, 2> complements;
+    const std::unordered_set<std::int64_t> common_ids(common.begin(), common.end());
+    for (int k = 0; k < 2; ++k) {
+        const auto cover = covers(response.ranges[k]);
+        std::size_t offset = 0;
+        for (const auto& n : cover) {
+            const std::size_t count = static_cast<std::size_t>(n.header.count);
+            if (count > ranged[k].values.size() - offset) {
+                throw ProverError("el AIT reporta un contador inconsistente");
+            }
+            std::vector<std::int64_t> rest;
+            rest.reserve(count);
+            for (std::size_t j = 0; j < count; ++j) {
+                std::int64_t id = ranged[k].values[offset + j];
+                if (!common_ids.count(id)) rest.push_back(id);
+            }
+            offset += count;
+            complements[k].push_back(elements(rest));
+            response.splits[k].push_back(aso::prove_split(complements[k].back(), pk));
+        }
+        if (offset != ranged[k].values.size()) throw ProverError("AIT: cobertura incompleta");
+    }
+    // La coprimalidad de cada par de complementos demuestra que no hay
+    // ninguna fila que pertenezca a ambos rangos y no figure en R.
+    for (const auto& a : complements[0]) {
+        for (const auto& b : complements[1]) {
+            response.disjoint.push_back(aso::prove_disjoint(a, b, pk));
+        }
+    }
+    return ans;
+}
+
+MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
+                                         const aso::PublicKey& pk, const MultiRangeQuery& asked,
+                                         const MultiRangeResponse& response) {
+    MultiRangeVerification out;
+    try {
+        check_c7_shape(asked);
+        if (response.state_id != digest.id()) throw Rejected("digest de estado distinto");
+        if (!(response.query == asked)) throw Rejected("la respuesta corresponde a otra consulta");
+        const std::array<RangeQuery, 2> queries = {asked.first, asked.second};
+        const scheme::TableDigest* table = digest.find_table(asked.first.table);
+        if (!table) throw Rejected("tabla no publicada en delta");
+        const auto& schema = table->schema;
+        const std::size_t ref = schema.reference_column;
+        std::array<std::size_t, 2> cols = {*schema.column_index(queries[0].column),
+                                           *schema.column_index(queries[1].column)};
+        std::array<ait::RangeVerification, 2> range;
+        auto start = Clock::now();
+        for (int k = 0; k < 2; ++k) {
+            const auto spec = selection_tree(queries[k], digest);
+            const auto* tree = digest.find_tree(spec);
+            if (!tree) throw Rejected("falta un AIT autenticado");
+            range[k] = ait::verify_range(tree->root, queries[k].lo, queries[k].hi, response.ranges[k]);
+            if (!range[k].accepted) throw Rejected("AIT " + spec.label() + ": " + range[k].reason);
+            out.cover_nodes[k] = range[k].cover.size();
+            if (response.splits[k].size() != range[k].cover.size()) {
+                throw Rejected("cantidad de testigos ASO distinta de la cobertura del AIT");
+            }
+        }
+        if (response.disjoint.size() != range[0].cover.size() * range[1].cover.size()) {
+            throw Rejected("cantidad incorrecta de certificados de coprimalidad ASO");
+        }
+        if (response.rows.size() > range[0].count || response.rows.size() > range[1].count) {
+            throw Rejected("la interseccion no puede ser mayor que un rango autenticado");
+        }
+        out.range_seconds = elapsed(start);
+
+        start = Clock::now();
+        std::unordered_set<std::int64_t> seen;
+        for (const auto& rp : response.rows) {
+            const crypto::Digest hash = db::row_hash(schema, rp.row);
+            const std::int64_t id = std::get<std::int64_t>(rp.row[ref]);
+            if (id == 0 || !seen.insert(id).second) throw Rejected("referencia repetida o nula");
+            if (!merkle::verify_inclusion(table->rows_root, table->row_count, hash, rp.inclusion)) {
+                throw Rejected("fila manipulada o no autenticada por el arbol de Merkle");
+            }
+            for (int k = 0; k < 2; ++k) {
+                const std::int64_t key = std::get<std::int64_t>(rp.row[cols[k]]);
+                if (key < queries[k].lo || key > queries[k].hi) {
+                    throw Rejected("fila de la respuesta fuera de los rangos de C7");
+                }
+            }
+        }
+        out.rows_seconds = elapsed(start);
+
+        start = Clock::now();
+        for (int k = 0; k < 2; ++k) {
+            // Cada fila debe caer exactamente en un nodo de cobertura de
+            // *cada* dimension; el nodo queda fijado por la clave autentica.
+            std::size_t assigned = 0;
+            for (std::size_t i = 0; i < range[k].cover.size(); ++i) {
+                const auto& cover = range[k].cover[i];
+                auto refs = result_in_node(response.rows, cols[k], cover.header, ref);
+                assigned += refs.size();
+                if (refs.size() > cover.header.count) throw Rejected("un nodo tiene mas filas que su contador");
+                if (!aso::verify_split(cover.payload.acc_g1, elements(refs), response.splits[k][i], pk)) {
+                    throw Rejected("ASO: el resultado y el complemento no reconstruyen un nodo autenticado");
+                }
+            }
+            if (assigned != response.rows.size()) throw Rejected("una fila no corresponde a la cobertura AIT");
+        }
+        std::size_t i = 0;
+        for (const auto& a : response.splits[0]) {
+            for (const auto& b : response.splits[1]) {
+                if (!aso::verify_disjoint(a, b, response.disjoint[i++])) {
+                    throw Rejected("ASO: los complementos comparten identificadores; faltan filas");
+                }
+            }
+        }
+        out.aso_seconds = elapsed(start);
+        for (const auto& row : response.rows) out.rows.push_back(row.row);
+        out.accepted = true;
+    } catch (const std::exception& e) {
+        out.accepted = false;
+        out.reason = e.what();
+        out.rows.clear();
+    }
+    return out;
+}
+}  // namespace tt::query

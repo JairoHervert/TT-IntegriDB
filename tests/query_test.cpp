@@ -60,6 +60,13 @@ int main() {
               "C5 <periodo1> <periodo2>");
         check(parse({"C6", "20241", "20242"}).query == RangeQuery{"student", "admission_term", 20241, 20242},
               "C6 <periodo1> <periodo2>");
+        const auto c7 = parse({"C7", "6", "8", "20221", "20222"});
+        check(c7.multi.has_value() && c7.query == RangeQuery{"academic_record", "grade", 6, 8} &&
+                  c7.multi->second == RangeQuery{"academic_record", "term_code", 20221, 20222},
+              "C7 admite dos intervalos autenticados");
+        check(query::to_sql(*c7.multi) ==
+                  "SELECT * FROM academic_record WHERE grade BETWEEN 6 AND 8 AND term_code BETWEEN 20221 AND 20222",
+              "C7 produce SQL canonico");
         const query::ParsedQuery r = parse({"range", "course", "credits_tenths", "-5", "90"});
         check(r.catalog_id.empty() && r.query == RangeQuery{"course", "credits_tenths", -5, 90},
               "range <tabla> <columna> <min> <max>, con un negativo");

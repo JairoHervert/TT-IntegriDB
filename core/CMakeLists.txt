@@ -9,6 +9,7 @@ add_library(tt_core STATIC
   src/crypto/symmetric.cpp
   src/aso/keys.cpp
   src/aso/accumulator.cpp
+  src/aso/intersection.cpp
   src/scheme/keys.cpp
   src/scheme/key_io.cpp
   src/ait/node.cpp
@@ -26,6 +27,7 @@ add_library(tt_core STATIC
   src/scheme/setup.cpp
   src/query/query.cpp
   src/query/selection.cpp
+  src/query/multirange.cpp
   src/query/response_io.cpp
 )
 

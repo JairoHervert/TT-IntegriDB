@@ -13,6 +13,9 @@
 #include "tt/query/query.hpp"
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
+#include "tt/query/multirange.hpp"
+#include "tt/scheme/key_io.hpp"
+#include "tt/scheme/keys.hpp"
 #include "tt/scheme/authenticated_db.hpp"
 #include "tt/scheme/digest.hpp"
 
@@ -37,6 +40,7 @@ struct AnswerOptions {
     query::ParsedQuery query;
     fs::path state = "setup";
     fs::path out = "respuesta.bin";
+    fs::path keys = "keys";
 };
 
 /*
@@ -54,6 +58,8 @@ AnswerOptions parse_answer_options(const std::vector<std::string>& args) {
         const std::string& arg = args[i];
         if (arg == "--state") {
             opt.state = cli::option_value(args, i);
+        } else if (arg == "--keys") {
+            opt.keys = cli::option_value(args, i);
         } else if (arg == "--out") {
             opt.out = cli::option_value(args, i);
         } else if (arg.rfind("--", 0) == 0) {
@@ -91,6 +97,7 @@ std::string answer_usage() {
            query::kQueryForms +
            "      --state <carpeta>  donde estan delta.txt y authenticated_db.bin\n"
            "                         (por defecto: setup).\n"
+           "      --keys <carpeta>   clave publica para los testigos ASO de C7 (defecto: keys).\n"
            "      --out <archivo>    donde se escribe la respuesta (por defecto:\n"
            "                         respuesta.bin).\n"
            "      La conexion se toma de TT_DB_HOST, TT_DB_PORT, TT_DB_USER, TT_DB_NAME\n"
@@ -118,7 +125,7 @@ int run_answer(const std::vector<std::string>& args) {
     const auto t_total = Clock::now();
 
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[prover] %s: %s\n", label.c_str(), query::to_sql(opt.query.query).c_str());
+    std::printf("[prover] %s: %s\n", label.c_str(),  (opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(opt.query.query)).c_str());
 
     auto start = Clock::now();
     const scheme::DatabaseDigest digest = scheme::load_digest(delta_path);
@@ -126,6 +133,27 @@ int run_answer(const std::vector<std::string>& args) {
     std::printf("[prover] estado: version %llu, id %s (plan %s); D~ cargada en %.2f s\n",
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str(),
                 digest.plan.c_str(), seconds_since(start));
+
+    if (opt.query.multi) {
+        const fs::path pk_path = opt.keys / "public_key.txt";
+        const auto pk = scheme::load_public_key(pk_path);
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint) {
+            throw std::runtime_error("clave publica de C7 distinta de la publicada en delta");
+        }
+        start = Clock::now();
+        const auto answer = query::answer_multirange(adb, digest, pk.aso, *opt.query.multi, store);
+        const double proof_s = seconds_since(start);
+        std::printf("[prover] C7: AIT grado %llu, AIT periodo %llu; interseccion %zu filas; prueba ASO en %.2f s\n",
+                    static_cast<unsigned long long>(answer.input_counts[0]),
+                    static_cast<unsigned long long>(answer.input_counts[1]),
+                    answer.response.rows.size(), proof_s);
+        if (answer.stale_rows) std::fprintf(stderr, "[prover] AVISO: %zu filas cambiaron despues de Setup\n", answer.stale_rows);
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_multirange_response(opt.out, answer.response);
+        std::printf("[prover] respuesta C7 guardada: %s (%s); tiempo total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
 
     start = Clock::now();
     const query::SelectionAnswer answer = query::answer_selection(adb, digest, opt.query.query, store);

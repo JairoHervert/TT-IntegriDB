@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <initializer_list>
 #include <string>
 
 #include "tt/io/binary.hpp"
@@ -16,6 +17,8 @@ namespace {
 constexpr unsigned char kMagic[8] = {'T', 'T', 'R', 'S', 'P', 0, 0, 0};
 constexpr std::uint32_t kFormatVersion = 1;
 constexpr std::uint8_t kKindSelection = 1;
+constexpr std::uint8_t kKindMultirange = 2;
+constexpr std::size_t kMaxWitnesses = 4096;
 
 // Limites de lectura: ninguna respuesta valida los alcanza y evitan
 // reservar memoria absurda si un campo esta alterado.
@@ -230,6 +233,93 @@ SelectionResponse load_response(const std::filesystem::path& path) {
     const std::vector<unsigned char> data = io::read_file(path);
     try {
         return decode_response(data);
+    } catch (const ResponseFormatError& e) {
+        throw ResponseFormatError(path.string() + ": " + e.what());
+    }
+}
+
+
+// C7 tiene un nuevo tipo de respuesta (kind=2). No se altera el formato de C1-C6.
+std::vector<unsigned char> encode_multirange_response(const MultiRangeResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindMultirange).digest(resp.state_id);
+    w.text(resp.query.first.table);
+    for (const auto& q : {resp.query.first, resp.query.second}) {
+        w.text(q.column).i64(q.lo).i64(q.hi);
+    }
+    for (const auto& proof : resp.ranges) {
+        w.u32(static_cast<std::uint32_t>(proof.entries.size()));
+        for (const auto& e : proof.entries) write_entry(w, e);
+    }
+    for (const auto& witnesses : resp.splits) {
+        w.u32(static_cast<std::uint32_t>(witnesses.size()));
+        for (const auto& s : witnesses) w.point(s.rest_g1).point(s.rest_g2);
+    }
+    w.u32(static_cast<std::uint32_t>(resp.disjoint.size()));
+    for (const auto& d : resp.disjoint) w.point(d.bezout_u).point(d.bezout_v);
+    w.u32(static_cast<std::uint32_t>(resp.rows.size()));
+    for (const auto& row : resp.rows) write_row(w, row);
+    return w.data();
+}
+
+MultiRangeResponse decode_multirange_response(const std::vector<unsigned char>& bytes) {
+    MultiRangeResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic))) {
+            throw ResponseFormatError("no es una respuesta de tt-integridb");
+        }
+        if (r.u32() != kFormatVersion) throw ResponseFormatError("version de formato desconocida");
+        if (r.u8() != kKindMultirange) throw ResponseFormatError("la respuesta no es de tipo C7");
+        resp.state_id = r.digest();
+        const std::string table = r.text(kMaxName);
+        for (int k = 0; k < 2; ++k) {
+            auto& q = k == 0 ? resp.query.first : resp.query.second;
+            q.table = table;
+            q.column = r.text(kMaxName);
+            q.lo = r.i64();
+            q.hi = r.i64();
+        }
+        for (auto& proof : resp.ranges) {
+            const std::uint32_t n = r.u32();
+            r.require_items(n, kEntryBytes);
+            proof.entries.reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) proof.entries.push_back(read_entry(r));
+        }
+        for (auto& splits : resp.splits) {
+            const std::uint32_t n = r.u32();
+            if (n > kMaxWitnesses) throw io::FormatError("demasiados testigos de nodos ASO");
+            r.require_items(n, 65 + 129);
+            splits.reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) splits.push_back({r.g1(), r.g2()});
+        }
+        const std::uint32_t d = r.u32();
+        if (d > kMaxWitnesses) throw io::FormatError("demasiados testigos de coprimalidad");
+        r.require_items(d, 129 * 2);
+        resp.disjoint.reserve(d);
+        for (std::uint32_t i = 0; i < d; ++i) resp.disjoint.push_back({r.g2(), r.g2()});
+        const std::uint32_t n = r.u32();
+        r.require_items(n, kRowBytes);
+        resp.rows.reserve(n);
+        for (std::uint32_t i = 0; i < n; ++i) resp.rows.push_back(read_row(r));
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato C7 invalido: ") + e.what());
+    }
+    return resp;
+}
+
+std::size_t save_multirange_response(const std::filesystem::path& path, const MultiRangeResponse& r) {
+    const auto bytes = encode_multirange_response(r);
+    io::write_file_atomic(path, bytes);
+    return bytes.size();
+}
+
+MultiRangeResponse load_multirange_response(const std::filesystem::path& path) {
+    const auto bytes = io::read_file(path);
+    try {
+        return decode_multirange_response(bytes);
     } catch (const ResponseFormatError& e) {
         throw ResponseFormatError(path.string() + ": " + e.what());
     }

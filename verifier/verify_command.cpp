@@ -12,6 +12,7 @@
 #include "tt/query/query.hpp"
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
+#include "tt/query/multirange.hpp"
 #include "tt/scheme/digest.hpp"
 #include "tt/scheme/key_io.hpp"
 #include "tt/scheme/keys.hpp"
@@ -171,7 +172,7 @@ int run_verify(const std::vector<std::string>& args) {
     const VerifyOptions opt = parse_verify_options(args);
     const query::RangeQuery& q = opt.query.query;
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[verifier] %s: %s\n", label.c_str(), query::to_sql(q).c_str());
+    std::printf("[verifier] %s: %s\n", label.c_str(), (opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(q)).c_str());
 
     const fs::path pk_path = opt.keys / "public_key.txt";
     if (!fs::exists(opt.delta)) {
@@ -192,8 +193,15 @@ int run_verify(const std::vector<std::string>& args) {
     std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", opt.delta.string().c_str(),
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str());
     try {
-        const scheme::TreeSpec spec = query::selection_tree(q, digest);
-        std::printf("[verifier] se verifica con el AIT %s\n", spec.label().c_str());
+        if (opt.query.multi) {
+            for (const auto& part : {opt.query.multi->first, opt.query.multi->second}) {
+                const auto spec = query::selection_tree(part, digest);
+                std::printf("[verifier] C7: AIT %s\n", spec.label().c_str());
+            }
+        } else {
+            const scheme::TreeSpec spec = query::selection_tree(q, digest);
+            std::printf("[verifier] se verifica con el AIT %s\n", spec.label().c_str());
+        }
     } catch (const query::UnsupportedQuery& e) {
         std::fprintf(stderr, "[verifier] consulta no soportada: %s\n", e.what());
         return 1;
@@ -216,6 +224,27 @@ int run_verify(const std::vector<std::string>& args) {
     }
     std::printf("[verifier] respuesta del probador: %s (%s)\n", opt.response.string().c_str(),
                 cli::file_size_text(opt.response).c_str());
+    if (opt.query.multi) {
+        query::MultiRangeResponse response;
+        try {
+            response = query::load_multirange_response(opt.response);
+        } catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto v = query::verify_multirange(digest, pk.aso, *opt.query.multi, response);
+        if (!v.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C7: %s\n", v.reason.c_str());
+            return kExitRejected;
+        }
+        std::printf("[verifier] RESPUESTA VERIFICADA C7: %zu filas en %.2f s\n",
+                    v.rows.size(), seconds_since(start));
+        std::printf("[verifier] AIT %.3f s, Merkle %.3f s, ASO %.3f s\n",
+                    v.range_seconds, v.rows_seconds, v.aso_seconds);
+        print_rows(digest.find_table(q.table)->schema, v.rows, opt.show);
+        return 0;
+    }
     query::SelectionResponse response;
     try {
         response = query::load_response(opt.response);

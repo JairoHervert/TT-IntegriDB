@@ -21,7 +21,7 @@ core/                     núcleo compartido: el esquema (sin MySQL ni red)
   include/tt/io/            archivos binarios y escritura atómica
   include/tt/scheme/        Init, Setup, digest δ, base autenticada D~,
                             planes de árboles y archivos de claves
-  include/tt/query/         consultas C1–C6: ProofGen, Verify y el formato
+  include/tt/query/         consultas C1–C7: ProofGen, Verify y el formato
                             de la respuesta (R, π)
 cli/                      utilidades de línea de comandos de los tres programas
 mysql/                    adaptador de MySQL (libmysqlclient): lectura de la
@@ -232,3 +232,75 @@ Por defecto son 500 alumnos. Para usar 1000 (o 2000 con `--size large`):
 python3 academic_records_db/tools/generate_synthetic_data.py --size medium --data-only --output academic_records_db/init/02_seed_data.sql
 docker compose down -v && docker compose up -d
 ```
+
+## C7: rango multidimensional con interseccion ASO (octubre 2026)
+
+El comando siguiente implementa el **capitulo 6.5.1** y la **tabla 7.15**:
+
+```bash
+# Desde el repositorio: claves y Setup existentes (no regenerar)
+export TT_DB_PASS=...           # contraseña real de app_user
+cmake -S . -B build
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+
+./build/prover/tt_prover answer C7 6 8 20221 20222 --keys keys --out respuesta_c7.bin
+./build/verifier/tt_verifier verify C7 6 8 20221 20222 --response respuesta_c7.bin
+```
+
+Sobre la base pequeña del reporte con semilla 42, se esperan **1 373 filas**.
+**No** es suficiente verificar únicamente que la respuesta cumple el predicado: el
+verificador valida las dos pruebas RangeCover y la prueba criptográfica de
+intersección; si se omite alguna fila, los complementos comparten un ID y la
+comprobación de coprimalidad falla.
+
+### Funcionamiento de la prueba de interseccion
+
+1. El probador obtiene los conjuntos `A` (grade) y `B` (term_code) a
+   partir de los dos AIT autenticados. Calcula `C=A∩B`, y devuelve solo sus
+   filas con pruebas Merkle. No transmite todas las filas de `A` y `B`.
+2. Para cada nodo de cobertura `N` demuestra `N = C_N ∪ D_N` con un
+   testigo del acumulador de `D_N`. Comprueba:
+
+   `e(acc_G1(C_N), acc_G2(D_N)) = e(acc_G1(N), g2)`.
+
+   Los elementos acumulados son los **inversos** de los `record_id` en el
+   campo, según la convención ya usada en el AIT.
+3. Para cada par de nodos de las dos dimensiones, demuestra que sus
+   complementos son disjuntos. Si los polinomios característicos son
+   `P_D` y `P_E`, NTL calcula `U*P_D + V*P_E = 1`. Se publican
+   `g2^{U(s)}` y `g2^{V(s)}`, verificados con:
+
+   `e(acc_G1(D),g2^{U(s)}) * e(acc_G1(E),g2^{V(s)}) = e(g1,g2)`.
+
+4. Al no haber coincidencias entre complementos, todas las filas que
+   satisfacen **ambos** predicados están en `C`. El verificador comprueba
+   además que cada fila publicada pertenece auténticamente a la tabla por
+   Merkle, no está duplicada y satisface los dos predicados.
+
+Las pruebas ASO se basan en los acumuladores bilineales y supuestos de
+seguridad/extractabilidad de IntegriDB. No se usa el modo opcional `--aso`
+de C1–C6: en C7 la prueba es **obligatoria**. El formato de la respuesta
+C7 es TTRSP (versión 1, tipo **2**); el tipo **1** de C1–C6 no cambia.
+
+**Advertencia de desempeño:** el generador C7 reconstruye polinomios de
+los complementos y utiliza el algoritmo extendido de Euclides de NTL;
+para la base de 15 171 filas el costo puede ser notable. El diseño prioriza
+la verificación de completitud criptográfica por encima de la eficiencia
+óptima. Conviene medir tiempos en tu VM antes de sacar conclusiones.
+
+### Pruebas incluidas
+
+`tests/multirange_test.cpp` cubre resultado correcto contra fuerza bruta,
+serialización, rangos vacíos y ataques: omisión, duplicación, alteración de
+filas, cambios de digest, alteración del AIT, falsificación de compromiso y
+falsificación de testigos de Bézout. `tests/query_test.cpp` incluye la forma
+C7. Para una ejecución enfocada:
+
+```bash
+ctest --test-dir build -R 'multirange_test|query_test' --output-on-failure
+```
+
+El código C7 está en `core/src/query/multirange.cpp`,
+`core/src/aso/intersection.cpp`, `core/src/query/response_io.cpp`,
+`prover/answer_command.cpp` y `verifier/verify_command.cpp`.
