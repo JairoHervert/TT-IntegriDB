@@ -77,9 +77,64 @@ SelectionResponse load_response(const std::filesystem::path& path);
 
 
 // Tipo 2 del formato TTRSP: preserva sin cambios el formato tipo 1 de C1-C6.
+
+/*
+ * Serializa la respuesta C7: digest, dos rangos, pruebas AIT, testigos
+ * ASO de separacion y coprimalidad, y filas con sus pruebas Merkle.
+ *
+ * Parametros:
+ *   response  respuesta multidimensional generada por el probador
+ *
+ * Devuelve:
+ *   Los bytes del formato TTRSP de tipo 2.
+ */
 std::vector<unsigned char> encode_multirange_response(const MultiRangeResponse& response);
+
+/*
+ * Reconstruye una respuesta C7 desde bytes no confiables. Comprueba la
+ * cabecera TTRSP, el tipo 2, las longitudes y el fin exacto del mensaje.
+ * La lectura del formato no implica aceptar sus pruebas criptograficas.
+ *
+ * Parametros:
+ *   data  bytes de una respuesta C7
+ *
+ * Devuelve:
+ *   La respuesta decodificada, pendiente de verify_multirange.
+ *
+ * Errores:
+ *   Lanza ResponseFormatError si la cabecera, el tipo, los tamanos, los
+ *   puntos codificados o el contenido de la respuesta son invalidos.
+ */
 MultiRangeResponse decode_multirange_response(const std::vector<unsigned char>& data);
+
+/*
+ * Codifica una respuesta C7 y la guarda mediante escritura atomica.
+ *
+ * Parametros:
+ *   path      ruta del archivo de salida
+ *   response  respuesta C7 que se desea guardar
+ *
+ * Devuelve:
+ *   Tamano de la respuesta guardada, en bytes.
+ *
+ * Errores:
+ *   Propaga los errores de escritura del archivo.
+ */
 std::size_t save_multirange_response(const std::filesystem::path& path, const MultiRangeResponse& response);
+
+/*
+ * Lee y decodifica una respuesta C7 desde un archivo.
+ *
+ * Parametros:
+ *   path  ruta del archivo de respuesta
+ *
+ * Devuelve:
+ *   La respuesta C7 decodificada, aun pendiente de validacion.
+ *
+ * Errores:
+ *   Propaga errores de lectura y lanza ResponseFormatError con la ruta
+ *   del archivo cuando los bytes no representan una respuesta C7 valida.
+ */
 MultiRangeResponse load_multirange_response(const std::filesystem::path& path);
 
 }  // namespace tt::query

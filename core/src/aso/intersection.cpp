@@ -8,8 +8,15 @@
 
 namespace tt::aso {
 namespace {
-// Los puntos G2 recibidos del servidor nunca se confian: deben estar en
-// el subgrupo de orden primo incluso si su serializacion es correcta.
+/*
+ * Comprueba que un punto G2 pertenezca al subgrupo de orden primo.
+ *
+ * Parametros:
+ *   p  punto G2 recibido como parte de una prueba ASO
+ *
+ * Devuelve:
+ *   true si pertenece al subgrupo esperado; false en otro caso.
+ */
 bool valid_g2(const bn::Ec2& p) { return crypto::in_prime_order_subgroup(p); }
 }
 

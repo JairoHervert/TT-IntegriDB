@@ -239,7 +239,10 @@ SelectionResponse load_response(const std::filesystem::path& path) {
 }
 
 
-// C7 tiene un nuevo tipo de respuesta (kind=2). No se altera el formato de C1-C6.
+/*
+ * Implementacion del formato TTRSP tipo 2: conserva las primitivas de
+ * escritura usadas por C1-C6 y agrega las dos pruebas AIT y testigos ASO.
+ */
 std::vector<unsigned char> encode_multirange_response(const MultiRangeResponse& resp) {
     io::BinaryWriter w;
     w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindMultirange).digest(resp.state_id);
@@ -262,6 +265,10 @@ std::vector<unsigned char> encode_multirange_response(const MultiRangeResponse& 
     return w.data();
 }
 
+/*
+ * Implementacion: lee el formato C7 y rechaza versiones o tipos distintos,
+ * longitudes excesivas, respuestas truncadas y bytes sobrantes.
+ */
 MultiRangeResponse decode_multirange_response(const std::vector<unsigned char>& bytes) {
     MultiRangeResponse resp;
     try {
@@ -310,12 +317,19 @@ MultiRangeResponse decode_multirange_response(const std::vector<unsigned char>& 
     return resp;
 }
 
+/*
+ * Implementacion: serializa el formato C7 y utiliza escritura atomica.
+ */
 std::size_t save_multirange_response(const std::filesystem::path& path, const MultiRangeResponse& r) {
     const auto bytes = encode_multirange_response(r);
     io::write_file_atomic(path, bytes);
     return bytes.size();
 }
 
+/*
+ * Implementacion: lee bytes del archivo, decodifica el tipo 2 y agrega la
+ * ruta al mensaje de error cuando el formato es invalido.
+ */
 MultiRangeResponse load_multirange_response(const std::filesystem::path& path) {
     const auto bytes = io::read_file(path);
     try {

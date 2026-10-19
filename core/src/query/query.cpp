@@ -146,8 +146,8 @@ std::string to_sql(const RangeQuery& q) {
 }
 
 /*
- * Implementacion: localiza la tabla en delta, revisa la columna y busca el
- * arbol (columna -> referencia) entre los arboles publicados.
+ * Implementacion: concatena los dos predicados BETWEEN de C7.
+ * No busca un arbol en delta ni ejecuta la consulta en MySQL.
  */
 std::string to_sql(const MultiRangeQuery& q) {
     return "SELECT * FROM " + q.first.table + " WHERE " + q.first.column + " BETWEEN " +

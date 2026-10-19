@@ -51,6 +51,15 @@ struct RangeQuery {
 struct MultiRangeQuery {
     RangeQuery first;
     RangeQuery second;
+    /*
+     * Compara los dos rangos de C7, incluyendo tablas, columnas y limites.
+     *
+     * Parametros:
+     *   o  otra consulta multidimensional
+     *
+     * Devuelve:
+     *   true si ambos rangos coinciden; false en otro caso.
+     */
     bool operator==(const MultiRangeQuery& o) const {
         return first == o.first && second == o.second;
     }
@@ -111,6 +120,17 @@ ParsedQuery parse_query(const std::vector<std::string>& words);
  *   Por ejemplo "SELECT * FROM academic_record WHERE grade BETWEEN 6 AND 8".
  */
 std::string to_sql(const RangeQuery& query);
+
+/*
+ * Escribe C7 como SELECT con dos predicados BETWEEN unidos por AND.
+ * Solo construye texto para mostrar la consulta; no accede a MySQL.
+ *
+ * Parametros:
+ *   query  consulta multidimensional de C7
+ *
+ * Devuelve:
+ *   La sentencia SQL equivalente a los dos rangos solicitados.
+ */
 std::string to_sql(const MultiRangeQuery& query);
 
 /*

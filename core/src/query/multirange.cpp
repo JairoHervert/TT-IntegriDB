@@ -15,6 +15,15 @@
 namespace tt::query {
 namespace {
 using Clock = std::chrono::steady_clock;
+/*
+ * Calcula los segundos transcurridos desde un instante del reloj monotono.
+ *
+ * Parametros:
+ *   t  instante inicial
+ *
+ * Devuelve:
+ *   Duracion transcurrida en segundos.
+ */
 double elapsed(Clock::time_point t) {
     return std::chrono::duration<double>(Clock::now() - t).count();
 }
@@ -23,7 +32,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Orden de los nodos de RangeCover = orden de los identificadores de tree->range.
+/*
+ * Extrae los nodos kCover de una prueba RangeCover sin alterar su orden.
+ * Dicho orden coincide con los grupos de identificadores de tree->range.
+ *
+ * Parametros:
+ *   proof  prueba AIT que contiene entradas de cobertura y otras entradas
+ *
+ * Devuelve:
+ *   Nodos de cobertura del rango en el orden de la prueba.
+ */
 std::vector<ait::CoverNode> covers(const ait::RangeProof& proof) {
     std::vector<ait::CoverNode> out;
     for (const auto& e : proof.entries) {
@@ -32,7 +50,19 @@ std::vector<ait::CoverNode> covers(const ait::RangeProof& proof) {
     return out;
 }
 
-// Los IDs del AIT se acumulan como inversos en Z_r, no como enteros.
+/*
+ * Convierte referencias de filas en elementos del campo usados por el AIT.
+ * Cada identificador se acumula como su inverso modular en Z_r.
+ *
+ * Parametros:
+ *   refs  identificadores de filas del nodo o de la respuesta
+ *
+ * Devuelve:
+ *   FieldSet con las representaciones acumulables de los identificadores.
+ *
+ * Errores:
+ *   Propaga los errores de ait::value_to_element para valores no validos.
+ */
 aso::FieldSet elements(const std::vector<std::int64_t>& refs) {
     aso::FieldSet s;
     s.elements.reserve(refs.size());
@@ -40,12 +70,33 @@ aso::FieldSet elements(const std::vector<std::int64_t>& refs) {
     return s;
 }
 
+/*
+ * Comprueba si una clave pertenece al intervalo cerrado de un nodo AIT.
+ *
+ * Parametros:
+ *   h    encabezado autenticado del nodo
+ *   key  valor de la columna filtrada
+ *
+ * Devuelve:
+ *   true si min_key <= key <= max_key; false en otro caso.
+ */
 bool in_node(const ait::NodeHeader& h, std::int64_t key) {
     return h.min_key <= key && key <= h.max_key;
 }
 
-// En cada AIT los nodos de cobertura tienen intervalos disjuntos;
-// el valor de la columna de la fila permite asignarla al nodo correcto.
+/*
+ * Obtiene los IDs de filas publicadas cuya clave pertenece a un nodo de
+ * cobertura AIT; cada fila se asigna mediante su columna filtrada.
+ *
+ * Parametros:
+ *   rows              filas de la respuesta con sus pruebas Merkle
+ *   key_column        posicion de la columna por la que se filtra
+ *   h                 encabezado del nodo de cobertura
+ *   reference_column  posicion de la columna que identifica cada fila
+ *
+ * Devuelve:
+ *   Identificadores de las filas publicadas que caen en ese nodo.
+ */
 std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
                                          std::size_t key_column, const ait::NodeHeader& h,
                                          std::size_t reference_column) {
@@ -58,6 +109,16 @@ std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
     return ids;
 }
 
+/*
+ * Comprueba que la consulta tenga la forma fija soportada por C7:
+ * academic_record, rango grade y rango term_code, con limites ordenados.
+ *
+ * Parametros:
+ *   q  consulta multidimensional que se desea procesar
+ *
+ * Errores:
+ *   Lanza UnsupportedQuery si la forma o los rangos son invalidos.
+ */
 void check_c7_shape(const MultiRangeQuery& q) {
     if (q.first.table != "academic_record" || q.second.table != "academic_record" ||
         q.first.column != "grade" || q.second.column != "term_code" ||
