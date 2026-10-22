@@ -198,3 +198,16 @@ inclusión conjunta para filas vecinas, que comparte los hashes comunes.
 - La respuesta incluye el id del estado y la consulta, para que una
   respuesta de otro estado o de otra consulta se rechace con un motivo
   claro (RNF08).
+
+## C13: MAX/MIN por reduccion a rango (IntegriDB §4.4)
+
+`C13 <student_id>` propone la minima calificacion desde el AIT existente
+`academic_record(student_id -> grade)` de C10 y **verifica**:
+
+`student_id = id AND grade BETWEEN INT64_MIN AND minimo_propuesto`
+
+mediante el mismo procedimiento criptografico C7 (RangeCover de los AIT,
+interseccion ASO y filas autenticadas con Merkle). Solo se acepta el valor
+propuesto cuando **todas** las filas del rango tienen ese mismo valor y
+existe al menos una fila. Si el AIT autentica que el alumno no tiene filas,
+se entrega SQL `NULL`. El transporte vuelve a ser `TTRSP` tipo 2.

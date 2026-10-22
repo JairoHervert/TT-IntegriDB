@@ -14,6 +14,8 @@
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
 #include "tt/query/multirange.hpp"
+#include "tt/query/minimum.hpp"
+#include "tt/query/count_intersection.hpp"
 #include "tt/scheme/key_io.hpp"
 #include "tt/scheme/keys.hpp"
 #include "tt/scheme/authenticated_db.hpp"
@@ -97,11 +99,11 @@ std::string answer_usage() {
            query::kQueryForms +
            "      --state <carpeta>  donde estan delta.txt y authenticated_db.bin\n"
            "                         (por defecto: setup).\n"
-           "      --keys <carpeta>   clave publica para los testigos ASO de C7 (defecto: keys).\n"
+           "      --keys <carpeta>   clave publica ASO de C7/C11/C12/C13 (defecto: keys).\n"
            "      --out <archivo>    donde se escribe la respuesta (por defecto:\n"
            "                         respuesta.bin).\n"
            "      La conexion se toma de TT_DB_HOST, TT_DB_PORT, TT_DB_USER, TT_DB_NAME\n"
-           "      y TT_DB_PASS (obligatoria).\n";
+           "      y TT_DB_PASS (obligatoria para consultas que leen filas MySQL).\n";
 }
 
 /*
@@ -121,11 +123,13 @@ int run_answer(const std::vector<std::string>& args) {
                      opt.state.string().c_str());
         return 1;
     }
-    mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
     const auto t_total = Clock::now();
 
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[prover] %s: %s\n", label.c_str(),  (opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(opt.query.query)).c_str());
+    std::printf("[prover] %s: %s\n", label.c_str(),  (opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+                                         opt.query.count ? query::to_sql(*opt.query.count) :
+                                         opt.query.multi ? query::to_sql(*opt.query.multi) :
+                                                           query::to_sql(opt.query.query)).c_str());
 
     auto start = Clock::now();
     const scheme::DatabaseDigest digest = scheme::load_digest(delta_path);
@@ -134,7 +138,54 @@ int run_answer(const std::vector<std::string>& args) {
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str(),
                 digest.plan.c_str(), seconds_since(start));
 
+    if (opt.query.min_student) {
+        const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint) {
+            throw std::runtime_error("clave publica de C13 distinta de delta");
+        }
+        mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
+        start = Clock::now();
+        const auto answer = query::answer_minimum(adb, digest, pk.aso, *opt.query.min_student, store);
+        const auto& r = answer.range_answer;
+        std::printf("[prover] C13: alumno %llu refs, rango grade %llu refs, "
+                    "MIN %s, %zu filas testigo; AIT+ASO+Merkle en %.2f s\n",
+                    static_cast<unsigned long long>(r.input_counts[0]),
+                    static_cast<unsigned long long>(r.input_counts[1]),
+                    answer.minimum ? std::to_string(*answer.minimum).c_str() : "NULL",
+                    r.response.rows.size(), seconds_since(start));
+        if (r.stale_rows > 0) {
+            std::fprintf(stderr, "[prover] AVISO: %zu filas distintas al estado de Setup\n", r.stale_rows);
+        }
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_multirange_response(opt.out, r.response);
+        std::printf("[prover] respuesta C13 guardada: %s (%s); total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
+
+    if (opt.query.count) {
+        const fs::path pk_path = opt.keys / "public_key.txt";
+        const auto pk = scheme::load_public_key(pk_path);
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint) {
+            throw std::runtime_error("clave publica de COUNT distinta de delta");
+        }
+        start = Clock::now();
+        const auto answer = query::answer_count(adb, digest, pk.aso, *opt.query.count);
+        std::printf("[prover] %s: AIT alumno %llu, AIT segundo filtro %llu; COUNT %llu; ASO en %.2f s\n",
+                    opt.query.catalog_id.c_str(),
+                    static_cast<unsigned long long>(answer.input_counts[0]),
+                    static_cast<unsigned long long>(answer.input_counts[1]),
+                    static_cast<unsigned long long>(answer.response.count), seconds_since(start));
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_count_response(opt.out, answer.response);
+        std::printf("[prover] respuesta %s guardada: %s (%s); sin SELECT MySQL; total %.2f s\n",
+                    opt.query.catalog_id.c_str(), opt.out.string().c_str(),
+                    cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
+
     if (opt.query.multi) {
+        mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
         const fs::path pk_path = opt.keys / "public_key.txt";
         const auto pk = scheme::load_public_key(pk_path);
         if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint) {
@@ -155,6 +206,7 @@ int run_answer(const std::vector<std::string>& args) {
         return 0;
     }
 
+    mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
     start = Clock::now();
     const query::SelectionAnswer answer = query::answer_selection(adb, digest, opt.query.query, store);
     const double prove_seconds = seconds_since(start);

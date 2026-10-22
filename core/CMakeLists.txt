@@ -28,6 +28,8 @@ add_library(tt_core STATIC
   src/query/query.cpp
   src/query/selection.cpp
   src/query/multirange.cpp
+  src/query/minimum.cpp
+  src/query/count_intersection.cpp
   src/query/response_io.cpp
 )
 

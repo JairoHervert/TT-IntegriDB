@@ -102,7 +102,7 @@ std::vector<CatalogQuery> build_catalog() {
          "Rango en dos columnas con interseccion de record_id; se cuenta el resultado."},
         {"C13", "Agregacion", "Calificacion minima o maxima de un alumno",
          "SELECT MIN(grade) FROM academic_record WHERE student_id = ?",
-         {ar_student, ar_grade},
+         {ar_student, ar_grade, ar_student_grade},
          "MIN/MAX se reduce a rango: existe un registro del alumno con esa calificacion y ninguno "
          "por debajo (o por encima)."},
         {"C14", "Composicion", "Creditos aprobados de un alumno",

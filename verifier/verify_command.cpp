@@ -13,6 +13,8 @@
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
 #include "tt/query/multirange.hpp"
+#include "tt/query/minimum.hpp"
+#include "tt/query/count_intersection.hpp"
 #include "tt/scheme/digest.hpp"
 #include "tt/scheme/key_io.hpp"
 #include "tt/scheme/keys.hpp"
@@ -172,7 +174,9 @@ int run_verify(const std::vector<std::string>& args) {
     const VerifyOptions opt = parse_verify_options(args);
     const query::RangeQuery& q = opt.query.query;
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[verifier] %s: %s\n", label.c_str(), (opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(q)).c_str());
+    std::printf("[verifier] %s: %s\n", label.c_str(), (opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+                                          opt.query.count ? query::to_sql(*opt.query.count) :
+                                          opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(q)).c_str());
 
     const fs::path pk_path = opt.keys / "public_key.txt";
     if (!fs::exists(opt.delta)) {
@@ -193,7 +197,19 @@ int run_verify(const std::vector<std::string>& args) {
     std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", opt.delta.string().c_str(),
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str());
     try {
-        if (opt.query.multi) {
+        if (opt.query.min_student) {
+            const query::RangeQuery a{"academic_record", "student_id", *opt.query.min_student, *opt.query.min_student};
+            const query::RangeQuery b{"academic_record", "grade", 0, 0};
+            for (const auto& part : {a, b}) {
+                const auto spec = query::selection_tree(part, digest);
+                std::printf("[verifier] C13: AIT %s\n", spec.label().c_str());
+            }
+        } else if (opt.query.count) {
+            for (const auto& part : {opt.query.count->first, opt.query.count->second}) {
+                const auto spec = query::selection_tree(part, digest);
+                std::printf("[verifier] %s: AIT %s\n", opt.query.catalog_id.c_str(), spec.label().c_str());
+            }
+        } else if (opt.query.multi) {
             for (const auto& part : {opt.query.multi->first, opt.query.multi->second}) {
                 const auto spec = query::selection_tree(part, digest);
                 std::printf("[verifier] C7: AIT %s\n", spec.label().c_str());
@@ -224,6 +240,47 @@ int run_verify(const std::vector<std::string>& args) {
     }
     std::printf("[verifier] respuesta del probador: %s (%s)\n", opt.response.string().c_str(),
                 cli::file_size_text(opt.response).c_str());
+    if (opt.query.min_student) {
+        query::MultiRangeResponse response;
+        try {
+            response = query::load_multirange_response(opt.response);
+        } catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C13: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto checked = query::verify_minimum(digest, pk.aso, *opt.query.min_student, response);
+        if (!checked.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C13: %s\n", checked.reason.c_str());
+            return kExitRejected;
+        }
+        if (checked.minimum) {
+            std::printf("[verifier] RESPUESTA VERIFICADA C13: MIN = %lld (%zu filas testigo) en %.2f s\n",
+                        static_cast<long long>(*checked.minimum), checked.witnesses_rows, seconds_since(start));
+        } else {
+            std::printf("[verifier] RESPUESTA VERIFICADA C13: MIN = NULL (alumno sin registros) en %.2f s\n",
+                        seconds_since(start));
+        }
+        return 0;
+    }
+    if (opt.query.count) {
+        query::CountResponse response;
+        try {
+            response = query::load_count_response(opt.response);
+        } catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA %s: %s\n", opt.query.catalog_id.c_str(), e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto verified = query::verify_count(digest, pk.aso, *opt.query.count, response);
+        if (!verified.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA %s: %s\n", opt.query.catalog_id.c_str(), verified.reason.c_str());
+            return kExitRejected;
+        }
+        std::printf("[verifier] RESPUESTA VERIFICADA %s: COUNT = %llu en %.2f s\n",
+                    opt.query.catalog_id.c_str(), static_cast<unsigned long long>(verified.count), seconds_since(start));
+        return 0;
+    }
     if (opt.query.multi) {
         query::MultiRangeResponse response;
         try {

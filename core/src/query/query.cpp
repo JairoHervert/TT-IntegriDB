@@ -16,6 +16,9 @@ const char* const kQueryForms =
     "      C5 <periodo1> <periodo2>      SELECT * FROM academic_record WHERE term_code BETWEEN ...\n"
     "      C6 <periodo1> <periodo2>      SELECT * FROM student WHERE admission_term BETWEEN ...\n"
     "      C7 <grade_min> <grade_max> <term_min> <term_max>   rango multidimensional (ASO)\n"
+    "      C11 <student_id>               COUNT de calificaciones menores que 6 (ASO)\n"
+    "      C12 <student_id> <evaluation_type>  COUNT verificable ASO (sin leer filas MySQL)\n"
+    "      C13 <student_id>               MIN verificable como rango grade <= minimo (ASO)\n"
     "      range <tabla> <columna> <min> <max>   rango en cualquier columna entera\n"
     "      (los periodos se escriben como en la base, por ejemplo 20241 = 2024-1)\n";
 
@@ -106,6 +109,35 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         check_bounds(out.query);
         return out;
     }
+    if (words[0] == "C11") {
+        expect_words(words, 2, "C11 <student_id>");
+        const auto student = parse_integer(words[1]);
+        out.catalog_id = "C11";
+        out.query = RangeQuery{"academic_record", "student_id", student, student};
+        // grade < 6 equivale exactamente a [INT64_MIN, 5] para claves enteras.
+        out.count = CountQuery{"C11", out.query,
+                               RangeQuery{"academic_record", "grade",
+                                          std::numeric_limits<std::int64_t>::min(), 5}};
+        return out;
+    }
+    if (words[0] == "C12") {
+        expect_words(words, 3, "C12 <student_id> <evaluation_type>");
+        const auto student = parse_integer(words[1]);
+        const auto evaluation = parse_integer(words[2]);
+        out.catalog_id = "C12";
+        out.query = RangeQuery{"academic_record", "student_id", student, student};
+        out.count = CountQuery{"C12", out.query,
+                               RangeQuery{"academic_record", "evaluation_type", evaluation, evaluation}};
+        return out;
+    }
+    if (words[0] == "C13") {
+        expect_words(words, 2, "C13 <student_id>");
+        const auto student = parse_integer(words[1]);
+        out.catalog_id = "C13";
+        out.query = RangeQuery{"academic_record", "student_id", student, student};
+        out.min_student = student;
+        return out;
+    }
     if (words[0] == "C7") {
         expect_words(words, 5, "C7 <grade_min> <grade_max> <term_min> <term_max>");
         out.catalog_id = "C7";
@@ -133,7 +165,7 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         return out;
     }
     throw QueryError("consulta desconocida '" + words[0] +
-                     "'; por ahora se verifican C1 a C7 y 'range'");
+                     "'; por ahora se verifican C1 a C7, C11 a C13 y 'range'");
 }
 
 /*
@@ -154,6 +186,17 @@ std::string to_sql(const MultiRangeQuery& q) {
            std::to_string(q.first.lo) + " AND " + std::to_string(q.first.hi) + " AND " +
            q.second.column + " BETWEEN " + std::to_string(q.second.lo) + " AND " +
            std::to_string(q.second.hi);
+}
+
+/*
+ * Escribe el COUNT del catalogo sin modificar los predicados del usuario.
+ */
+std::string to_sql(const CountQuery& q) {
+    const std::string predicate = q.catalog_id == "C11"
+        ? q.second.column + " < 6"
+        : q.second.column + " = " + std::to_string(q.second.lo);
+    return "SELECT COUNT(*) FROM " + q.first.table + " WHERE " + q.first.column + " = " +
+           std::to_string(q.first.lo) + " AND " + predicate;
 }
 
 scheme::TreeSpec selection_tree(const RangeQuery& q, const scheme::DatabaseDigest& digest) {

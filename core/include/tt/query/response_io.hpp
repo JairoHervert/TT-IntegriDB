@@ -35,6 +35,7 @@
 
 #include "tt/query/selection.hpp"
 #include "tt/query/multirange.hpp"
+#include "tt/query/count_intersection.hpp"
 
 namespace tt::query {
 
@@ -136,5 +137,24 @@ std::size_t save_multirange_response(const std::filesystem::path& path, const Mu
  *   del archivo cuando los bytes no representan una respuesta C7 valida.
  */
 MultiRangeResponse load_multirange_response(const std::filesystem::path& path);
+
+/*
+ * Tipo 3 de TTRSP: serializa COUNT y sus testigos de interseccion ASO.
+ *
+ * Parametros:
+ *   response / data  respuesta C12 o sus bytes
+ *   path             archivo que se lee o escribe
+ *
+ * Devuelve:
+ *   Bytes, respuesta reconstruida o numero de bytes guardados.
+ *
+ * Errores:
+ *   Las funciones de lectura lanzan ResponseFormatError si el mensaje
+ *   contiene una cabecera, tipo, tamanos o puntos invalidos.
+ */
+std::vector<unsigned char> encode_count_response(const CountResponse& response);
+CountResponse decode_count_response(const std::vector<unsigned char>& data);
+std::size_t save_count_response(const std::filesystem::path& path, const CountResponse& response);
+CountResponse load_count_response(const std::filesystem::path& path);
 
 }  // namespace tt::query

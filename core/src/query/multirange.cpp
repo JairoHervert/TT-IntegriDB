@@ -1,6 +1,7 @@
 #include "tt/query/multirange.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <chrono>
 #include <stdexcept>
 #include <unordered_set>
@@ -110,7 +111,7 @@ std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
 }
 
 /*
- * Comprueba que la consulta tenga la forma fija soportada por C7:
+ * Comprueba la forma soportada para C7 o para el rango de C13:
  * academic_record, rango grade y rango term_code, con limites ordenados.
  *
  * Parametros:
@@ -119,11 +120,15 @@ std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
  * Errores:
  *   Lanza UnsupportedQuery si la forma o los rangos son invalidos.
  */
-void check_c7_shape(const MultiRangeQuery& q) {
-    if (q.first.table != "academic_record" || q.second.table != "academic_record" ||
-        q.first.column != "grade" || q.second.column != "term_code" ||
-        q.first.lo > q.first.hi || q.second.lo > q.second.hi) {
-        throw UnsupportedQuery("C7 solo admite academic_record: grade y term_code con intervalos validos");
+void check_supported_shape(const MultiRangeQuery& q) {
+    const bool common = q.first.table == "academic_record" && q.second.table == "academic_record" &&
+        q.first.lo <= q.first.hi && q.second.lo <= q.second.hi;
+    const bool c7 = q.first.column == "grade" && q.second.column == "term_code";
+    const bool c13 = q.first.column == "student_id" && q.first.is_equality() &&
+        q.second.column == "grade" && q.second.lo == std::numeric_limits<std::int64_t>::min();
+    if (!common || (!c7 && !c13)) {
+        throw UnsupportedQuery("interseccion: solo C7 (grade/term_code) o C13 "
+                               "(student_id = ? AND grade <= candidato)");
     }
 }
 }  // namespace
@@ -132,7 +137,7 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
                                   const scheme::DatabaseDigest& digest,
                                   const aso::PublicKey& pk, const MultiRangeQuery& q,
                                   db::RowStore& store) {
-    check_c7_shape(q);
+    check_supported_shape(q);
     MultiRangeAnswer ans;
     const std::array<RangeQuery, 2> queries = {q.first, q.second};
     const auto* tab = adb.find_table(q.first.table);
@@ -205,7 +210,7 @@ MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
                                          const MultiRangeResponse& response) {
     MultiRangeVerification out;
     try {
-        check_c7_shape(asked);
+        check_supported_shape(asked);
         if (response.state_id != digest.id()) throw Rejected("digest de estado distinto");
         if (!(response.query == asked)) throw Rejected("la respuesta corresponde a otra consulta");
         const std::array<RangeQuery, 2> queries = {asked.first, asked.second};

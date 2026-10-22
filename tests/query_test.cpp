@@ -60,6 +60,23 @@ int main() {
               "C5 <periodo1> <periodo2>");
         check(parse({"C6", "20241", "20242"}).query == RangeQuery{"student", "admission_term", 20241, 20242},
               "C6 <periodo1> <periodo2>");
+        const auto c11 = parse({"C11", "1"});
+        check(c11.count.has_value() && c11.count->first == RangeQuery{"academic_record", "student_id", 1, 1} &&
+              c11.count->second == RangeQuery{"academic_record", "grade", std::numeric_limits<std::int64_t>::min(), 5},
+              "C11 usa igualdad en alumno y rango menor de 6 con limite inferior int64");
+        check(query::to_sql(*c11.count) ==
+              "SELECT COUNT(*) FROM academic_record WHERE student_id = 1 AND grade < 6",
+              "C11 produce SQL estricto menor que 6");
+        const auto c12 = parse({"C12", "1", "1"});
+        check(c12.count.has_value() && c12.count->first == RangeQuery{"academic_record", "student_id", 1, 1} &&
+              c12.count->second == RangeQuery{"academic_record", "evaluation_type", 1, 1},
+              "C12 acepta dos igualdades para COUNT");
+        check(query::to_sql(*c12.count) ==
+              "SELECT COUNT(*) FROM academic_record WHERE student_id = 1 AND evaluation_type = 1",
+              "C12 produce el SQL del catalogo");
+        const auto c13 = parse({"C13", "1"});
+        check(c13.min_student && *c13.min_student == 1 && c13.catalog_id == "C13",
+              "C13 acepta alumno y activa MIN autentico");
         const auto c7 = parse({"C7", "6", "8", "20221", "20222"});
         check(c7.multi.has_value() && c7.query == RangeQuery{"academic_record", "grade", 6, 8} &&
                   c7.multi->second == RangeQuery{"academic_record", "term_code", 20221, 20222},
@@ -80,6 +97,11 @@ int main() {
 
     section("Consultas mal escritas");
     check_throws<QueryError>([] { parse({}); }, "sin consulta");
+    check_throws<QueryError>([] { parse({"C11"}); }, "C11 incompleta");
+    check_throws<QueryError>([] { parse({"C11", "1", "5"}); }, "C11 con parametros extras");
+    check_throws<QueryError>([] { parse({"C12", "1"}); }, "C12 incompleta");
+    check_throws<QueryError>([] { parse({"C13"}); }, "C13 incompleta");
+    check_throws<QueryError>([] { parse({"C13", "1", "6"}); }, "C13 con parametros extras");
     check_throws<QueryError>([] { parse({"C9", "1"}); }, "consulta que todavia no se verifica (C9)");
     check_throws<QueryError>([] { parse({"c4", "6", "8"}); }, "id en minusculas");
     check_throws<QueryError>([] { parse({"C4", "6"}); }, "falta un valor");

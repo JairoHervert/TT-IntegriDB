@@ -18,6 +18,8 @@ constexpr unsigned char kMagic[8] = {'T', 'T', 'R', 'S', 'P', 0, 0, 0};
 constexpr std::uint32_t kFormatVersion = 1;
 constexpr std::uint8_t kKindSelection = 1;
 constexpr std::uint8_t kKindMultirange = 2;
+constexpr std::uint8_t kKindCount = 3;
+constexpr std::uint32_t kMaxCountReferences = 1000000; // limite de proteccion de recursos
 constexpr std::size_t kMaxWitnesses = 4096;
 
 // Limites de lectura: ninguna respuesta valida los alcanza y evitan
@@ -334,6 +336,118 @@ MultiRangeResponse load_multirange_response(const std::filesystem::path& path) {
     const auto bytes = io::read_file(path);
     try {
         return decode_multirange_response(bytes);
+    } catch (const ResponseFormatError& e) {
+        throw ResponseFormatError(path.string() + ": " + e.what());
+    }
+}
+
+
+/*
+ * Formato tipo 3: digest de estado, C11 o C12, 2 predicados, COUNT, IDs unicos,
+ * pruebas RangeCover, asignaciones de ID por nodo y testigos ASO.
+ */
+std::vector<unsigned char> encode_count_response(const CountResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindCount).digest(resp.state_id);
+    w.text(resp.query.catalog_id).text(resp.query.first.table);
+    for (const auto& q : {resp.query.first, resp.query.second}) {
+        w.text(q.column).i64(q.lo).i64(q.hi);
+    }
+    w.u64(resp.count);
+    w.u32(static_cast<std::uint32_t>(resp.references.size()));
+    for (auto ref : resp.references) w.i64(ref);
+    for (const auto& proof : resp.ranges) {
+        w.u32(static_cast<std::uint32_t>(proof.entries.size()));
+        for (const auto& e : proof.entries) write_entry(w, e);
+    }
+    for (int k = 0; k < 2; ++k) {
+        w.u32(static_cast<std::uint32_t>(resp.node_references[k].size()));
+        for (const auto& refs : resp.node_references[k]) {
+            w.u32(static_cast<std::uint32_t>(refs.size()));
+            for (auto ref : refs) w.i64(ref);
+        }
+        w.u32(static_cast<std::uint32_t>(resp.splits[k].size()));
+        for (const auto& witness : resp.splits[k]) w.point(witness.rest_g1).point(witness.rest_g2);
+    }
+    w.u32(static_cast<std::uint32_t>(resp.disjoint.size()));
+    for (const auto& witness : resp.disjoint) w.point(witness.bezout_u).point(witness.bezout_v);
+    return w.data();
+}
+
+CountResponse decode_count_response(const std::vector<unsigned char>& bytes) {
+    CountResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic))) {
+            throw ResponseFormatError("no es una respuesta de tt-integridb");
+        }
+        if (r.u32() != kFormatVersion) throw ResponseFormatError("version de formato desconocida");
+        if (r.u8() != kKindCount) throw ResponseFormatError("la respuesta no es de tipo COUNT");
+        resp.state_id = r.digest();
+        resp.query.catalog_id = r.text(kMaxName);
+        const auto table = r.text(kMaxName);
+        for (auto* q : {&resp.query.first, &resp.query.second}) {
+            q->table = table;
+            q->column = r.text(kMaxName);
+            q->lo = r.i64();
+            q->hi = r.i64();
+        }
+        resp.count = r.u64();
+        const std::uint32_t count = r.u32();
+        if (count > kMaxCountReferences) throw io::FormatError("demasiados ID en COUNT");
+        r.require_items(count, sizeof(std::int64_t));
+        resp.references.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) resp.references.push_back(r.i64());
+        for (auto& proof : resp.ranges) {
+            const auto n = r.u32();
+            r.require_items(n, kEntryBytes);
+            proof.entries.reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) proof.entries.push_back(read_entry(r));
+        }
+        for (int k = 0; k < 2; ++k) {
+            const auto nc = r.u32();
+            if (nc > kMaxWitnesses) throw io::FormatError("demasiados nodos de cobertura COUNT");
+            r.require_items(nc, sizeof(std::uint32_t));
+            resp.node_references[k].reserve(nc);
+            std::uint64_t total = 0;
+            for (std::uint32_t i = 0; i < nc; ++i) {
+                const auto n = r.u32();
+                total += n;
+                if (total > kMaxCountReferences) throw io::FormatError("demasiados ID de nodos COUNT");
+                r.require_items(n, sizeof(std::int64_t));
+                auto& refs = resp.node_references[k].emplace_back();
+                refs.reserve(n);
+                for (std::uint32_t j = 0; j < n; ++j) refs.push_back(r.i64());
+            }
+            const auto ns = r.u32();
+            if (ns > kMaxWitnesses) throw io::FormatError("demasiados testigos ASO COUNT");
+            r.require_items(ns, 65 + 129);
+            resp.splits[k].reserve(ns);
+            for (std::uint32_t i = 0; i < ns; ++i) resp.splits[k].push_back({r.g1(), r.g2()});
+        }
+        const auto nd = r.u32();
+        if (nd > kMaxWitnesses) throw io::FormatError("demasiados testigos Bezout COUNT");
+        r.require_items(nd, 2 * 129);
+        resp.disjoint.reserve(nd);
+        for (std::uint32_t i = 0; i < nd; ++i) resp.disjoint.push_back({r.g2(), r.g2()});
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato COUNT invalido: ") + e.what());
+    }
+    return resp;
+}
+
+std::size_t save_count_response(const std::filesystem::path& path, const CountResponse& r) {
+    const auto bytes = encode_count_response(r);
+    io::write_file_atomic(path, bytes);
+    return bytes.size();
+}
+
+CountResponse load_count_response(const std::filesystem::path& path) {
+    const auto bytes = io::read_file(path);
+    try {
+        return decode_count_response(bytes);
     } catch (const ResponseFormatError& e) {
         throw ResponseFormatError(path.string() + ": " + e.what());
     }

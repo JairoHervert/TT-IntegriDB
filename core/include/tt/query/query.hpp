@@ -65,11 +65,24 @@ struct MultiRangeQuery {
     }
 };
 
+// C11/C12: COUNT de la interseccion de dos rangos. Mantiene identificadores
+// autenticos como testigos, pero no necesita transferir filas completas.
+struct CountQuery {
+    std::string catalog_id;
+    RangeQuery first;
+    RangeQuery second;
+    bool operator==(const CountQuery& o) const {
+        return catalog_id == o.catalog_id && first == o.first && second == o.second;
+    }
+};
+
 // Una consulta leida de la linea de comandos.
 struct ParsedQuery {
     std::string catalog_id;  // C1 ... C7, o vacio si se escribio con "range"
     RangeQuery query;
     std::optional<MultiRangeQuery> multi;  // presente solo para C7
+    std::optional<CountQuery> count;       // presente para C11 y C12
+    std::optional<std::int64_t> min_student;  // C13: MIN(grade) de un alumno
 };
 
 // La consulta esta mal escrita (forma desconocida, numero invalido, lo > hi...).
@@ -98,6 +111,9 @@ extern const char* const kQueryForms;
  *   C5 <periodo1> <periodo2>   academic_record, term_code en un intervalo
  *   C6 <periodo1> <periodo2>   student, admission_term en un intervalo
  *   C7 <gmin> <gmax> <tmin> <tmax>        interseccion ASO
+ *   C11 <student_id>                       COUNT de evaluaciones no acreditadas
+ *   C12 <student_id> <evaluation_type>     COUNT con interseccion ASO
+ *   C13 <student_id>                       MIN mediante rango autenticado
  *   range <tabla> <columna> <min> <max>   cualquier rango en una columna
  *
  * Parametros:
@@ -132,6 +148,11 @@ std::string to_sql(const RangeQuery& query);
  *   La sentencia SQL equivalente a los dos rangos solicitados.
  */
 std::string to_sql(const MultiRangeQuery& query);
+
+/*
+ * Representa C11 (igualdad y grade < 6) o C12 (dos igualdades).
+ */
+std::string to_sql(const CountQuery& query);
 
 /*
  * Determina el AIT con el que se verifica la consulta: (columna filtrada ->
