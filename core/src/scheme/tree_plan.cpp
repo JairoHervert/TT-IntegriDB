@@ -80,13 +80,15 @@ std::vector<CatalogQuery> build_catalog() {
         {"C8", "JOIN", "Registros academicos con la unidad de aprendizaje evaluada",
          "SELECT * FROM academic_record JOIN course ON academic_record.course_id = course.course_id",
          {ar_course_join, co_course},
-         "La raiz de cada arbol (i, i) acumula los valores de su columna; el ASO prueba la "
-         "interseccion y Search da cuantas filas tiene cada valor comun; se devuelven esas filas, "
-         "distintas entre si, con su prueba de Merkle."},
+         "Los AIT (course_id, course_id) autentican las claves de ambas tablas; "
+         "Split ASO y Bezout prueban pertenencia y completitud de las coincidencias, "
+         "con multiplicidades; Merkle autentica las filas devueltas."},
         {"C9", "JOIN", "Alumnos con el programa academico al que pertenecen",
          "SELECT * FROM student JOIN program ON student.program_id = program.program_id",
          {st_program_join, pr_program},
-         "Igual que C8, con los arboles (program_id, program_id) de ambas tablas."},
+         "Los AIT (program_id, program_id) autentican las claves de ambas tablas; "
+         "Split ASO y Bezout comprueban la completitud del JOIN muchos-a-uno y "
+         "Merkle autentica las filas devueltas."},
         {"C10", "Agregacion", "Promedio de calificaciones de un alumno",
          "SELECT AVG(grade) FROM academic_record WHERE student_id = ?",
          {ar_student_grade},

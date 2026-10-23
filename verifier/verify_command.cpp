@@ -14,6 +14,9 @@
 #include "tt/query/selection.hpp"
 #include "tt/query/multirange.hpp"
 #include "tt/query/minimum.hpp"
+#include "tt/query/average.hpp"
+#include "tt/query/join_program.hpp"
+#include "tt/query/join_course.hpp"
 #include "tt/query/count_intersection.hpp"
 #include "tt/scheme/digest.hpp"
 #include "tt/scheme/key_io.hpp"
@@ -174,7 +177,10 @@ int run_verify(const std::vector<std::string>& args) {
     const VerifyOptions opt = parse_verify_options(args);
     const query::RangeQuery& q = opt.query.query;
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[verifier] %s: %s\n", label.c_str(), (opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+    std::printf("[verifier] %s: %s\n", label.c_str(), (opt.query.join_courses ? "SELECT * FROM academic_record JOIN course ON academic_record.course_id = course.course_id" :
+                                          opt.query.join_programs ? "SELECT * FROM student JOIN program ON student.program_id = program.program_id" :
+                                          opt.query.avg_student ? ("SELECT AVG(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.avg_student)) :
+                                          opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
                                           opt.query.count ? query::to_sql(*opt.query.count) :
                                           opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(q)).c_str());
 
@@ -197,7 +203,23 @@ int run_verify(const std::vector<std::string>& args) {
     std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", opt.delta.string().c_str(),
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str());
     try {
-        if (opt.query.min_student) {
+        if (opt.query.join_courses) {
+            for (const auto* name : {"academic_record", "course"}) {
+                const scheme::TreeSpec spec{name, "course_id", "course_id"};
+                if (!digest.find_tree(spec)) throw query::UnsupportedQuery("C8: falta AIT " + spec.label());
+                std::printf("[verifier] C8: AIT %s\n", spec.label().c_str());
+            }
+        } else if (opt.query.join_programs) {
+            for (const auto* name : {"student", "program"}) {
+                const scheme::TreeSpec spec{name, "program_id", "program_id"};
+                if (!digest.find_tree(spec)) throw query::UnsupportedQuery("C9: falta AIT " + spec.label());
+                std::printf("[verifier] C9: AIT %s\n", spec.label().c_str());
+            }
+        } else if (opt.query.avg_student) {
+            const scheme::TreeSpec spec{"academic_record", "student_id", "grade"};
+            if (!digest.find_tree(spec)) throw query::UnsupportedQuery("C10: AIT no existe: " + spec.label());
+            std::printf("[verifier] C10: AIT %s\n", spec.label().c_str());
+        } else if (opt.query.min_student) {
             const query::RangeQuery a{"academic_record", "student_id", *opt.query.min_student, *opt.query.min_student};
             const query::RangeQuery b{"academic_record", "grade", 0, 0};
             for (const auto& part : {a, b}) {
@@ -240,6 +262,107 @@ int run_verify(const std::vector<std::string>& args) {
     }
     std::printf("[verifier] respuesta del probador: %s (%s)\n", opt.response.string().c_str(),
                 cli::file_size_text(opt.response).c_str());
+    if (opt.query.join_courses) {
+        query::JoinCourseResponse response;
+        try { response = query::load_join_course_response(opt.response); }
+        catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C8: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto v = query::verify_join_course(digest, pk.aso, response);
+        if (!v.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C8: %s\n", v.reason.c_str());
+            return kExitRejected;
+        }
+        std::printf("[verifier] RESPUESTA VERIFICADA C8: %zu filas JOIN; %zu cursos en %.2f s\n",
+                    v.joined_rows, v.course_rows.size(), seconds_since(start));
+        const auto& record_schema = digest.find_table("academic_record")->schema;
+        const auto& course_schema = digest.find_table("course")->schema;
+        db::TableSchema joined_schema;
+        joined_schema.name = "academic_record JOIN course";
+        for (const auto& c : record_schema.columns)
+            joined_schema.columns.push_back({"academic_record." + c.name, c.type});
+        for (const auto& c : course_schema.columns)
+            joined_schema.columns.push_back({"course." + c.name, c.type});
+        const std::size_t record_key = *record_schema.column_index("course_id");
+        const std::size_t course_key = *course_schema.column_index("course_id");
+        std::vector<db::Row> joined_rows;
+        joined_rows.reserve(v.record_rows.size());
+        for (const auto& record : v.record_rows) {
+            const auto key = std::get<std::int64_t>(record.at(record_key));
+            for (const auto& course : v.course_rows) {
+                if (std::get<std::int64_t>(course.at(course_key)) != key) continue;
+                db::Row joined = record;
+                joined.insert(joined.end(), course.begin(), course.end());
+                joined_rows.push_back(std::move(joined));
+                break;
+            }
+        }
+        print_rows(joined_schema, joined_rows, opt.show);
+        return 0;
+    }
+    if (opt.query.join_programs) {
+        query::JoinProgramResponse response;
+        try { response = query::load_join_program_response(opt.response); }
+        catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C9: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto v = query::verify_join_program(digest, pk.aso, response);
+        if (!v.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C9: %s\n", v.reason.c_str());
+            return kExitRejected;
+        }
+        std::printf("[verifier] RESPUESTA VERIFICADA C9: %zu filas del JOIN; %zu programas en %.2f s\n",
+                    v.joined_rows, v.program_rows.size(), seconds_since(start));
+        // La salida del verificador es la del JOIN SQL, no dos tablas separadas.
+        const auto& st_schema = digest.find_table("student")->schema;
+        const auto& pr_schema = digest.find_table("program")->schema;
+        db::TableSchema joined_schema;
+        joined_schema.name = "student JOIN program";
+        for (const auto& c : st_schema.columns)
+            joined_schema.columns.push_back({"student." + c.name, c.type});
+        for (const auto& c : pr_schema.columns)
+            joined_schema.columns.push_back({"program." + c.name, c.type});
+        const std::size_t st_key = *st_schema.column_index("program_id");
+        const std::size_t pr_key = *pr_schema.column_index("program_id");
+        std::vector<db::Row> joined_rows;
+        joined_rows.reserve(v.student_rows.size());
+        for (const auto& student : v.student_rows) {
+            const auto key = std::get<std::int64_t>(student.at(st_key));
+            for (const auto& program : v.program_rows) {
+                if (std::get<std::int64_t>(program.at(pr_key)) != key) continue;
+                db::Row joined = student;
+                joined.insert(joined.end(), program.begin(), program.end());
+                joined_rows.push_back(std::move(joined));
+                break;
+            }
+        }
+        print_rows(joined_schema, joined_rows, opt.show);
+        return 0;
+    }
+    if (opt.query.avg_student) {
+        query::AverageResponse response;
+        try { response = query::load_average_response(opt.response); }
+        catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C10: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto checked = query::verify_average(digest, pk.aso, *opt.query.avg_student, response);
+        if (!checked.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C10: %s\n", checked.reason.c_str());
+            return kExitRejected;
+        }
+        if (checked.count)
+            std::printf("[verifier] RESPUESTA VERIFICADA C10: SUM %lld / COUNT %llu = AVG %.6f en %.2f s\n",
+                        static_cast<long long>(checked.sum), static_cast<unsigned long long>(checked.count),
+                        static_cast<double>(checked.sum) / checked.count, seconds_since(start));
+        else std::printf("[verifier] RESPUESTA VERIFICADA C10: AVG = NULL en %.2f s\n", seconds_since(start));
+        return 0;
+    }
     if (opt.query.min_student) {
         query::MultiRangeResponse response;
         try {

@@ -16,6 +16,11 @@
 
 namespace tt::query {
 
+/*
+ * Respuesta autenticada para COUNT de C11/C12. Incluye el resultado escalar,
+ * los ID ordenados de la interseccion y las pruebas AIT/ASO necesarias para
+ * demostrar pertenencia y completitud sin transmitir filas completas.
+ */
 struct CountResponse {
     crypto::Digest state_id{};
     CountQuery query;
@@ -29,12 +34,20 @@ struct CountResponse {
     std::vector<aso::DisjointWitness> disjoint;
 };
 
+/*
+ * Resultado del probador: respuesta criptografica y datos auxiliares para
+ * identificar los arboles y el numero de referencias de cada predicado.
+ */
 struct CountAnswer {
     CountResponse response;
     std::array<scheme::TreeSpec, 2> trees;
     std::array<std::uint64_t, 2> input_counts{};
 };
 
+/*
+ * Resultado de verificacion de COUNT: cuando accepted es false, reason
+ * explica el rechazo y count no debe utilizarse como resultado verificado.
+ */
 struct CountVerification {
     bool accepted = false;
     std::string reason;

@@ -111,8 +111,10 @@ std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
 }
 
 /*
- * Comprueba la forma soportada para C7 o para el rango de C13:
- * academic_record, rango grade y rango term_code, con limites ordenados.
+ * Comprueba las dos formas de interseccion autenticada soportadas:
+ * C7: academic_record, rangos grade y term_code.
+ * C13: academic_record, student_id fijo y grade <= candidato.
+ * Los limites de ambos rangos deben estar ordenados.
  *
  * Parametros:
  *   q  consulta multidimensional que se desea procesar

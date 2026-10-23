@@ -47,7 +47,7 @@ struct RangeQuery {
     bool is_equality() const { return lo == hi; }
 };
 
-// C7: interseccion de dos rangos sobre una misma tabla.
+// C7 (y rango auxiliar de C13): interseccion de dos rangos sobre una tabla.
 struct MultiRangeQuery {
     RangeQuery first;
     RangeQuery second;
@@ -71,6 +71,15 @@ struct CountQuery {
     std::string catalog_id;
     RangeQuery first;
     RangeQuery second;
+    /*
+     * Compara identificador de consulta y ambos predicados.
+     *
+     * Parametros:
+     *   o  consulta COUNT con la que se compara
+     *
+     * Devuelve:
+     *   true si identificador y rangos son iguales.
+     */
     bool operator==(const CountQuery& o) const {
         return catalog_id == o.catalog_id && first == o.first && second == o.second;
     }
@@ -82,6 +91,9 @@ struct ParsedQuery {
     RangeQuery query;
     std::optional<MultiRangeQuery> multi;  // presente solo para C7
     std::optional<CountQuery> count;       // presente para C11 y C12
+    bool join_programs = false;      // C9: JOIN student/program sin parametros
+    bool join_courses = false;       // C8: JOIN academic_record/course sin parametros
+    std::optional<std::int64_t> avg_student; // C10: AVG(grade)
     std::optional<std::int64_t> min_student;  // C13: MIN(grade) de un alumno
 };
 
@@ -111,6 +123,9 @@ extern const char* const kQueryForms;
  *   C5 <periodo1> <periodo2>   academic_record, term_code en un intervalo
  *   C6 <periodo1> <periodo2>   student, admission_term en un intervalo
  *   C7 <gmin> <gmax> <tmin> <tmax>        interseccion ASO
+ *   C8                                    JOIN academic_record y course (ASO)
+ *   C9                                    JOIN student y program (ASO)
+ *   C10 <student_id>                       AVG autenticado mediante SUM/COUNT
  *   C11 <student_id>                       COUNT de evaluaciones no acreditadas
  *   C12 <student_id> <evaluation_type>     COUNT con interseccion ASO
  *   C13 <student_id>                       MIN mediante rango autenticado
@@ -150,7 +165,14 @@ std::string to_sql(const RangeQuery& query);
 std::string to_sql(const MultiRangeQuery& query);
 
 /*
- * Representa C11 (igualdad y grade < 6) o C12 (dos igualdades).
+ * Escribe C11 (grade < 6) o C12 (igualdades) como texto SQL.
+ * No ejecuta la sentencia contra MySQL.
+ *
+ * Parametros:
+ *   query  consulta COUNT validada del catalogo
+ *
+ * Devuelve:
+ *   Sentencia SELECT COUNT(*) correspondiente a los predicados.
  */
 std::string to_sql(const CountQuery& query);
 

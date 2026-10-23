@@ -20,7 +20,19 @@ using test::check;
 using test::check_throws;
 using test::section;
 
+/*
+ * Comprueba la consulta C7 sobre un estado autenticado de prueba.
+ *
+ * Casos:
+ *   Interseccion correcta, testigos ASO, formato binario, manipulaciones
+ *   maliciosas y rangos sin resultados.
+ *
+ * Devuelve:
+ *   0 si todas las comprobaciones pasan; 1 si alguna falla.
+ */
 int main() {
+    // La base y las claves se crean en memoria; Setup autentica el estado
+    // y MemoryRowStore sustituye a MySQL para aislar la prueba criptografica.
     const auto base = test::case_study_database(120);
     const auto keys = scheme::init(160);
     std::vector<scheme::TreeSpec> specs;
@@ -33,6 +45,8 @@ int main() {
         return query::MultiRangeQuery{{"academic_record", "grade", gl, gh},
                                       {"academic_record", "term_code", tl, th}};
     };
+    // Resultado de referencia: filtrar la tabla completa sin utilizar AIT,
+    // ASO ni las funciones del probador que se desean comprobar.
     const auto expected = [&](const query::MultiRangeQuery& q) {
         std::vector<db::Row> rows;
         const auto* t = base.find("academic_record");
@@ -56,6 +70,8 @@ int main() {
         return query::verify_multirange(state.digest, keys.pk.aso, q, r);
     };
 
+    // Caso positivo: la prueba debe aceptar exactamente las filas filtradas
+    // manualmente y contener los dos tipos de testigos ASO.
     section("C7 autentica exactamente la interseccion de dos conjuntos de identificadores");
     const auto q = query_c7(6, 8, 20241, 20251);
     const auto honest = proof(q);
@@ -65,6 +81,8 @@ int main() {
     check(!honest.splits[0].empty() && !honest.splits[1].empty() && !honest.disjoint.empty(),
           "la prueba realmente incluye certificados criptograficos de split y coprimalidad");
 
+    // Prueba algebraica aislada: un elemento comun en los complementos
+    // impide que el algoritmo extendido de Euclides encuentre Bezout = 1.
     section("ASO rechaza un conjunto residual que oculta una coincidencia");
     {
         // Si se omite ID=3, ese ID acaba en AMBOS complementos.
@@ -82,6 +100,8 @@ int main() {
         check(aso::verify_disjoint(wa, wb, witness), "residuales disjuntos tienen certificado valido");
     }
 
+    // El tipo 2 debe conservar la respuesta al codificar y decodificar;
+    // lectores de otros tipos y mensajes malformados deben rechazarla.
     section("Formato serializado de tipo 2, separado de C1-C6");
     const auto wire = query::encode_multirange_response(honest);
     const auto decoded = query::decode_multirange_response(wire);
@@ -98,9 +118,12 @@ int main() {
     check_throws<query::ResponseFormatError>([&] { query::decode_multirange_response(malformed); },
                                                "respuesta C7 con bytes extra");
 
+    // Se parte de una prueba valida y se modifica un campo por vez.
+    // El verificador debe rechazar sin consultar la base original.
     section("Probador malicioso: omisiones, alteraciones, pruebas incorrectas");
     {
         auto bad = honest;
+        // Omision: rompe la condicion de completitud de la interseccion.
         bad.rows.pop_back();
         check(!verify(q, bad).accepted, "omitir una fila invalida ASO: completitud");
     }
@@ -116,11 +139,13 @@ int main() {
     }
     {
         auto bad = honest;
+        // Alterar el testigo de subconjunto invalida la relacion bilineal.
         bad.splits[0][0].rest_g1 = bad.splits[0][0].rest_g1 + crypto::init_pairing_group().g1;
         check(!verify(q, bad).accepted, "un compromiso de complemento falso se rechaza");
     }
     {
         auto bad = honest;
+        // Alterar Bezout invalida la prueba de complementos disjuntos.
         bad.disjoint[0].bezout_u = bad.disjoint[0].bezout_u + crypto::init_pairing_group().g2;
         check(!verify(q, bad).accepted, "testigo de Bezout alterado se rechaza");
     }
@@ -147,6 +172,8 @@ int main() {
         check(!verify(q, bad).accepted, "AIT adulterado rechazado");
     }
 
+    // La respuesta vacia es valida si un rango no contiene registros;
+    // tambien se prueba un intervalo amplio que incluye toda la tabla.
     section("Conjuntos vacios y casos frontera");
     {
         const auto none = query_c7(11, 15, 20241, 20251);

@@ -15,6 +15,9 @@
 #include "tt/query/selection.hpp"
 #include "tt/query/multirange.hpp"
 #include "tt/query/minimum.hpp"
+#include "tt/query/average.hpp"
+#include "tt/query/join_program.hpp"
+#include "tt/query/join_course.hpp"
 #include "tt/query/count_intersection.hpp"
 #include "tt/scheme/key_io.hpp"
 #include "tt/scheme/keys.hpp"
@@ -126,7 +129,10 @@ int run_answer(const std::vector<std::string>& args) {
     const auto t_total = Clock::now();
 
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
-    std::printf("[prover] %s: %s\n", label.c_str(),  (opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+    std::printf("[prover] %s: %s\n", label.c_str(),  (opt.query.join_courses ? "SELECT * FROM academic_record JOIN course ON academic_record.course_id = course.course_id" :
+                                         opt.query.join_programs ? "SELECT * FROM student JOIN program ON student.program_id = program.program_id" :
+                                         opt.query.avg_student ? ("SELECT AVG(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.avg_student)) :
+                                         opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
                                          opt.query.count ? query::to_sql(*opt.query.count) :
                                          opt.query.multi ? query::to_sql(*opt.query.multi) :
                                                            query::to_sql(opt.query.query)).c_str());
@@ -137,6 +143,60 @@ int run_answer(const std::vector<std::string>& args) {
     std::printf("[prover] estado: version %llu, id %s (plan %s); D~ cargada en %.2f s\n",
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str(),
                 digest.plan.c_str(), seconds_since(start));
+
+    if (opt.query.join_courses) {
+        const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint)
+            throw std::runtime_error("C8: clave publica distinta de delta");
+        mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
+        start = Clock::now();
+        const auto answer = query::answer_join_course(adb, digest, pk.aso, store);
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_join_course_response(opt.out, answer.response);
+        std::printf("[prover] C8: %zu registros, %zu cursos; JOIN de %zu filas; ASO en %.2f s\n",
+                    answer.response.record_rows.size(), answer.response.course_rows.size(),
+                    answer.response.record_rows.size(), seconds_since(start));
+        if (answer.stale_rows)
+            std::fprintf(stderr, "[prover] AVISO: %zu filas cambiaron despues de Setup\n", answer.stale_rows);
+        std::printf("[prover] respuesta C8: %s (%s); total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
+    if (opt.query.join_programs) {
+        const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint)
+            throw std::runtime_error("C9: clave publica distinta de delta");
+        mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
+        start = Clock::now();
+        const auto answer = query::answer_join_program(adb, digest, pk.aso, store);
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_join_program_response(opt.out, answer.response);
+        std::printf("[prover] C9: %zu alumnos, %zu programas; JOIN de %zu filas; ASO en %.2f s\n",
+                    answer.response.student_rows.size(), answer.response.program_rows.size(),
+                    answer.response.student_rows.size(), seconds_since(start));
+        if (answer.stale_rows)
+            std::fprintf(stderr, "[prover] AVISO: %zu filas cambiaron despues de Setup\n", answer.stale_rows);
+        std::printf("[prover] respuesta C9: %s (%s); total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
+    if (opt.query.avg_student) {
+        const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint)
+            throw std::runtime_error("C10: clave publica distinta de delta");
+        start = Clock::now();
+        const auto resp = query::answer_average(adb, digest, pk.aso, *opt.query.avg_student);
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_average_response(opt.out, resp);
+        if (resp.count)
+            std::printf("[prover] C10: SUM %lld, COUNT %llu, AVG %.6f; ASO en %.2f s\n",
+                        static_cast<long long>(resp.sum), static_cast<unsigned long long>(resp.count),
+                        static_cast<double>(resp.sum) / resp.count, seconds_since(start));
+        else std::printf("[prover] C10: AVG NULL, alumno sin registros\n");
+        std::printf("[prover] respuesta C10: %s (%s), sin SELECT MySQL; total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
 
     if (opt.query.min_student) {
         const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");

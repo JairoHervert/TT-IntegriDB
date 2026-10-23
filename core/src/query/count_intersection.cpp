@@ -22,6 +22,9 @@ public:
  * C11: student_id = ? AND grade < 6; limite inferior INT64_MIN.
  * C12: student_id = ? AND evaluation_type = ?.
  *
+ * Parametros:
+ *   q  consulta a validar como C11 o C12
+ *
  * Errores:
  *   Lanza UnsupportedQuery ante una consulta que no pertenezca a C11/C12.
  */
@@ -39,6 +42,15 @@ void check_shape(const CountQuery& q) {
     }
 }
 
+/*
+ * Convierte identificadores de fila a elementos del campo usados por ASO.
+ *
+ * Parametros:
+ *   refs  identificadores de fila a representar
+ *
+ * Devuelve:
+ *   FieldSet con un elemento por identificador, conservando el orden.
+ */
 aso::FieldSet elements(const std::vector<std::int64_t>& refs) {
     aso::FieldSet out;
     out.elements.reserve(refs.size());
@@ -46,6 +58,15 @@ aso::FieldSet elements(const std::vector<std::int64_t>& refs) {
     return out;
 }
 
+/*
+ * Extrae de la prueba los nodos que cubren el intervalo consultado.
+ *
+ * Parametros:
+ *   proof  prueba del RangeCover suministrada por el AIT
+ *
+ * Devuelve:
+ *   Nodos de cobertura en el orden de la prueba.
+ */
 std::vector<ait::CoverNode> covers(const ait::RangeProof& proof) {
     std::vector<ait::CoverNode> out;
     for (const auto& entry : proof.entries) {
@@ -55,8 +76,17 @@ std::vector<ait::CoverNode> covers(const ait::RangeProof& proof) {
     return out;
 }
 
-// El verificador no puede confiar en node_references: exige que cada ID
-// aparezca exactamente una vez y que la union sea el resultado declarado.
+/*
+ * Comprueba que las particiones declaradas suman exactamente los ID
+ * publicados, sin duplicados ni omisiones.
+ *
+ * Parametros:
+ *   parts     referencias publicadas por cada nodo de cobertura
+ *   expected  lista global ordenada de referencias anunciadas
+ *
+ * Devuelve:
+ *   true si los ID de parts coinciden una sola vez con expected.
+ */
 bool same_unique_references(const std::vector<std::vector<std::int64_t>>& parts,
                             const std::vector<std::int64_t>& expected) {
     std::vector<std::int64_t> all;

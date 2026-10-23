@@ -1,7 +1,7 @@
 // query_test.cpp
 //
-// Pruebas de la lectura de consultas (C1 a C6 y "range"), de su texto SQL y
-// de la eleccion del AIT con el que se verifica cada una.
+// Pruebas de la lectura de consultas (C1 a C7, C11 a C13 y "range"),
+// de su texto SQL y de la eleccion del AIT para seleccion y rango.
 
 #include <limits>
 #include <string>
@@ -60,6 +60,8 @@ int main() {
               "C5 <periodo1> <periodo2>");
         check(parse({"C6", "20241", "20242"}).query == RangeQuery{"student", "admission_term", 20241, 20242},
               "C6 <periodo1> <periodo2>");
+        // Las consultas de agregacion deben conservar el predicado exacto.
+        // C11 usa grade < 6 y C12 utiliza dos condiciones de igualdad.
         const auto c11 = parse({"C11", "1"});
         check(c11.count.has_value() && c11.count->first == RangeQuery{"academic_record", "student_id", 1, 1} &&
               c11.count->second == RangeQuery{"academic_record", "grade", std::numeric_limits<std::int64_t>::min(), 5},
@@ -74,6 +76,13 @@ int main() {
         check(query::to_sql(*c12.count) ==
               "SELECT COUNT(*) FROM academic_record WHERE student_id = 1 AND evaluation_type = 1",
               "C12 produce el SQL del catalogo");
+        // JOIN C8 emplea AIT (course_id, course_id) y no admite parametros.
+        check(parse({"C8"}).join_courses && parse({"C8"}).catalog_id == "C8",
+              "C8 habilita JOIN autentico academic_record/course");
+        // JOIN C9 no recibe parametros; usa los dos AIT (program_id, program_id).
+        check(parse({"C9"}).join_programs && parse({"C9"}).catalog_id == "C9",
+              "C9 habilita JOIN autenticado sin parametros");
+        // MIN se identifica por alumno; C7 expresa dos rangos distintos.
         const auto c13 = parse({"C13", "1"});
         check(c13.min_student && *c13.min_student == 1 && c13.catalog_id == "C13",
               "C13 acepta alumno y activa MIN autentico");
@@ -97,12 +106,15 @@ int main() {
 
     section("Consultas mal escritas");
     check_throws<QueryError>([] { parse({}); }, "sin consulta");
+    // Los nuevos comandos tambien rechazan parametros faltantes o extras;
+    // no se interpretan consultas aun no implementadas.
     check_throws<QueryError>([] { parse({"C11"}); }, "C11 incompleta");
     check_throws<QueryError>([] { parse({"C11", "1", "5"}); }, "C11 con parametros extras");
     check_throws<QueryError>([] { parse({"C12", "1"}); }, "C12 incompleta");
     check_throws<QueryError>([] { parse({"C13"}); }, "C13 incompleta");
     check_throws<QueryError>([] { parse({"C13", "1", "6"}); }, "C13 con parametros extras");
-    check_throws<QueryError>([] { parse({"C9", "1"}); }, "consulta que todavia no se verifica (C9)");
+    check_throws<QueryError>([] { parse({"C8", "1"}); }, "C8 no acepta parametros");
+    check_throws<QueryError>([] { parse({"C9", "1"}); }, "C9 no acepta parametros");
     check_throws<QueryError>([] { parse({"c4", "6", "8"}); }, "id en minusculas");
     check_throws<QueryError>([] { parse({"C4", "6"}); }, "falta un valor");
     check_throws<QueryError>([] { parse({"C1", "1", "2"}); }, "sobra un valor");

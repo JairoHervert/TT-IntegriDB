@@ -6,7 +6,18 @@
 
 namespace tt::query {
 namespace {
-/* El limite inferior representa todos los enteros <= candidato. */
+/*
+ * Construye los dos filtros usados para certificar MIN con C7.
+ * El minimo entero de int64 representa el extremo inferior abierto del
+ * dominio completo; la validacion del resultado corresponde al Verifier.
+ *
+ * Parametros:
+ *   student_id  alumno del que se busca el minimo
+ *   candidate   minimo propuesto por el Prover
+ *
+ * Devuelve:
+ *   Consulta student_id = alumno AND grade <= candidate.
+ */
 MultiRangeQuery minimum_range(std::int64_t student_id, std::int64_t candidate) {
     return {{"academic_record", "student_id", student_id, student_id},
             {"academic_record", "grade", std::numeric_limits<std::int64_t>::min(), candidate}};

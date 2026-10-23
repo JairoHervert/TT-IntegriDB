@@ -19,6 +19,9 @@ constexpr std::uint32_t kFormatVersion = 1;
 constexpr std::uint8_t kKindSelection = 1;
 constexpr std::uint8_t kKindMultirange = 2;
 constexpr std::uint8_t kKindCount = 3;
+constexpr std::uint8_t kKindAverage = 4;
+constexpr std::uint8_t kKindJoin = 5;
+constexpr std::uint8_t kKindJoinCourse = 6;  // C8, separado del tipo C9
 constexpr std::uint32_t kMaxCountReferences = 1000000; // limite de proteccion de recursos
 constexpr std::size_t kMaxWitnesses = 4096;
 
@@ -451,6 +454,267 @@ CountResponse load_count_response(const std::filesystem::path& path) {
     } catch (const ResponseFormatError& e) {
         throw ResponseFormatError(path.string() + ": " + e.what());
     }
+}
+
+// Formato compacto C10, preservando tipos TTRSP 1-3.
+std::vector<unsigned char> encode_average_response(const AverageResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindAverage).digest(resp.state_id);
+    w.i64(resp.student_id).u64(resp.count).i64(resp.sum);
+    w.u32(static_cast<std::uint32_t>(resp.range.entries.size()));
+    for (const auto& entry : resp.range.entries) write_entry(w, entry);
+    w.raw(resp.proof.a0.data(), resp.proof.a0.size());
+    w.raw(resp.proof.a1.data(), resp.proof.a1.size());
+    w.point(resp.proof.w1).point(resp.proof.w2);
+    return w.data();
+}
+AverageResponse decode_average_response(const std::vector<unsigned char>& bytes) {
+    AverageResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic)))
+            throw ResponseFormatError("no es respuesta TTRSP");
+        if (r.u32() != kFormatVersion || r.u8() != kKindAverage)
+            throw ResponseFormatError("formato o tipo C10 invalido");
+        resp.state_id = r.digest();
+        resp.student_id = r.i64();
+        resp.count = r.u64();
+        resp.sum = r.i64();
+        const auto count = r.u32();
+        r.require_items(count, kEntryBytes);
+        resp.range.entries.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) resp.range.entries.push_back(read_entry(r));
+        const auto* a0 = r.raw(crypto::kScalarBytes);
+        std::copy(a0, a0 + crypto::kScalarBytes, resp.proof.a0.begin());
+        const auto* a1 = r.raw(crypto::kScalarBytes);
+        std::copy(a1, a1 + crypto::kScalarBytes, resp.proof.a1.begin());
+        resp.proof.w1 = r.g1();
+        resp.proof.w2 = r.g1();
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato C10 invalido: ") + e.what());
+    }
+    return resp;
+}
+std::size_t save_average_response(const std::filesystem::path& path, const AverageResponse& resp) {
+    const auto data = encode_average_response(resp);
+    io::write_file_atomic(path, data);
+    return data.size();
+}
+AverageResponse load_average_response(const std::filesystem::path& path) {
+    const auto data = io::read_file(path);
+    try { return decode_average_response(data); }
+    catch (const ResponseFormatError& e) { throw ResponseFormatError(path.string()+": "+e.what()); }
+}
+
+
+/*
+ * Serializa C9: RangeCover total de ambos AIT, separaciones ASO,
+ * certificados de Bezout y filas autenticables de dos tablas.
+ *
+ * Parametros:
+ *   resp  respuesta de C9 generada por el Prover
+ *
+ * Devuelve:
+ *   Bytes del formato TTRSP tipo 5.
+ */
+std::vector<unsigned char> encode_join_program_response(const JoinProgramResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindJoin).digest(resp.state_id);
+    for (const auto& range : resp.ranges) {
+        w.u32(static_cast<std::uint32_t>(range.entries.size()));
+        for (const auto& entry : range.entries) write_entry(w, entry);
+    }
+    for (const auto& split : resp.splits) w.point(split.rest_g1).point(split.rest_g2);
+    for (const auto& disjoint : resp.disjoint) w.point(disjoint.bezout_u).point(disjoint.bezout_v);
+    for (const auto* rows : {&resp.student_rows, &resp.program_rows}) {
+        w.u32(static_cast<std::uint32_t>(rows->size()));
+        for (const auto& row : *rows) write_row(w, row);
+    }
+    return w.data();
+}
+
+/*
+ * Reconstruye C9 desde datos hostiles, sin considerar validas las pruebas.
+ *
+ * Parametros:
+ *   bytes  mensaje recibido de la red o de un archivo
+ *
+ * Devuelve:
+ *   Respuesta decodificada para verify_join_program.
+ *
+ * Errores:
+ *   Lanza ResponseFormatError ante estructuras malformadas.
+ */
+JoinProgramResponse decode_join_program_response(const std::vector<unsigned char>& bytes) {
+    JoinProgramResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic)))
+            throw ResponseFormatError("no es una respuesta de tt-integridb");
+        if (r.u32() != kFormatVersion || r.u8() != kKindJoin)
+            throw ResponseFormatError("formato o tipo C9 invalido");
+        resp.state_id = r.digest();
+        for (auto& range : resp.ranges) {
+            const auto n = r.u32();
+            r.require_items(n, kEntryBytes);
+            range.entries.reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) range.entries.push_back(read_entry(r));
+        }
+        for (auto& split : resp.splits) split = {r.g1(), r.g2()};
+        for (auto& d : resp.disjoint) d = {r.g2(), r.g2()};
+        for (auto* rows : {&resp.student_rows, &resp.program_rows}) {
+            const auto n = r.u32();
+            if (n > kMaxCountReferences) throw io::FormatError("C9: demasiadas filas");
+            r.require_items(n, kRowBytes);
+            rows->reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) rows->push_back(read_row(r));
+        }
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato C9 invalido: ") + e.what());
+    }
+    return resp;
+}
+
+/*
+ * Guarda C9 como archivo atomico, listo para comunicacion futura por red.
+ *
+ * Parametros:
+ *   path  archivo de respuesta
+ *   resp  resultado y pruebas del Prover
+ *
+ * Devuelve:
+ *   Cantidad de bytes escritos.
+ */
+std::size_t save_join_program_response(const std::filesystem::path& path, const JoinProgramResponse& resp) {
+    const auto bytes = encode_join_program_response(resp);
+    io::write_file_atomic(path, bytes);
+    return bytes.size();
+}
+
+/*
+ * Carga el archivo de C9 y verifica su formato binario.
+ *
+ * Parametros:
+ *   path  ruta del archivo de respuesta
+ *
+ * Devuelve:
+ *   Respuesta no confiable lista para comprobacion criptografica.
+ *
+ * Errores:
+ *   Propaga errores de lectura y ResponseFormatError al decodificar.
+ */
+JoinProgramResponse load_join_program_response(const std::filesystem::path& path) {
+    const auto bytes = io::read_file(path);
+    try { return decode_join_program_response(bytes); }
+    catch (const ResponseFormatError& e) { throw ResponseFormatError(path.string() + ": " + e.what()); }
+}
+
+/*
+ * Serializa C8: RangeCover total de ambos AIT, separaciones ASO,
+ * certificados de Bezout y filas autenticables de dos tablas.
+ *
+ * Parametros:
+ *   resp  respuesta de C8 generada por el Prover
+ *
+ * Devuelve:
+ *   Bytes del formato TTRSP tipo 5.
+ */
+std::vector<unsigned char> encode_join_course_response(const JoinCourseResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindJoinCourse).digest(resp.state_id);
+    for (const auto& range : resp.ranges) {
+        w.u32(static_cast<std::uint32_t>(range.entries.size()));
+        for (const auto& entry : range.entries) write_entry(w, entry);
+    }
+    for (const auto& split : resp.splits) w.point(split.rest_g1).point(split.rest_g2);
+    for (const auto& disjoint : resp.disjoint) w.point(disjoint.bezout_u).point(disjoint.bezout_v);
+    for (const auto* rows : {&resp.record_rows, &resp.course_rows}) {
+        w.u32(static_cast<std::uint32_t>(rows->size()));
+        for (const auto& row : *rows) write_row(w, row);
+    }
+    return w.data();
+}
+
+/*
+ * Reconstruye C8 desde datos hostiles, sin considerar validas las pruebas.
+ *
+ * Parametros:
+ *   bytes  mensaje recibido de la red o de un archivo
+ *
+ * Devuelve:
+ *   Respuesta decodificada para verify_join_course.
+ *
+ * Errores:
+ *   Lanza ResponseFormatError ante estructuras malformadas.
+ */
+JoinCourseResponse decode_join_course_response(const std::vector<unsigned char>& bytes) {
+    JoinCourseResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic)))
+            throw ResponseFormatError("no es una respuesta de tt-integridb");
+        if (r.u32() != kFormatVersion || r.u8() != kKindJoinCourse)
+            throw ResponseFormatError("formato o tipo C8 invalido");
+        resp.state_id = r.digest();
+        for (auto& range : resp.ranges) {
+            const auto n = r.u32();
+            r.require_items(n, kEntryBytes);
+            range.entries.reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) range.entries.push_back(read_entry(r));
+        }
+        for (auto& split : resp.splits) split = {r.g1(), r.g2()};
+        for (auto& d : resp.disjoint) d = {r.g2(), r.g2()};
+        for (auto* rows : {&resp.record_rows, &resp.course_rows}) {
+            const auto n = r.u32();
+            if (n > kMaxCountReferences) throw io::FormatError("C8: demasiadas filas");
+            r.require_items(n, kRowBytes);
+            rows->reserve(n);
+            for (std::uint32_t i = 0; i < n; ++i) rows->push_back(read_row(r));
+        }
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato C8 invalido: ") + e.what());
+    }
+    return resp;
+}
+
+/*
+ * Guarda C8 como archivo atomico, listo para comunicacion futura por red.
+ *
+ * Parametros:
+ *   path  archivo de respuesta
+ *   resp  resultado y pruebas del Prover
+ *
+ * Devuelve:
+ *   Cantidad de bytes escritos.
+ */
+std::size_t save_join_course_response(const std::filesystem::path& path, const JoinCourseResponse& resp) {
+    const auto bytes = encode_join_course_response(resp);
+    io::write_file_atomic(path, bytes);
+    return bytes.size();
+}
+
+/*
+ * Carga el archivo de C8 y verifica su formato binario.
+ *
+ * Parametros:
+ *   path  ruta del archivo de respuesta
+ *
+ * Devuelve:
+ *   Respuesta no confiable lista para comprobacion criptografica.
+ *
+ * Errores:
+ *   Propaga errores de lectura y ResponseFormatError al decodificar.
+ */
+JoinCourseResponse load_join_course_response(const std::filesystem::path& path) {
+    const auto bytes = io::read_file(path);
+    try { return decode_join_course_response(bytes); }
+    catch (const ResponseFormatError& e) { throw ResponseFormatError(path.string() + ": " + e.what()); }
 }
 
 }  // namespace tt::query

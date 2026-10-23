@@ -10,6 +10,7 @@ add_library(tt_core STATIC
   src/aso/keys.cpp
   src/aso/accumulator.cpp
   src/aso/intersection.cpp
+  src/aso/sum.cpp
   src/scheme/keys.cpp
   src/scheme/key_io.cpp
   src/ait/node.cpp
@@ -29,6 +30,10 @@ add_library(tt_core STATIC
   src/query/selection.cpp
   src/query/multirange.cpp
   src/query/minimum.cpp
+  src/query/average.cpp
+  src/query/join_common.cpp
+  src/query/join_program.cpp
+  src/query/join_course.cpp
   src/query/count_intersection.cpp
   src/query/response_io.cpp
 )

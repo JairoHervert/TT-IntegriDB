@@ -16,6 +16,9 @@ const char* const kQueryForms =
     "      C5 <periodo1> <periodo2>      SELECT * FROM academic_record WHERE term_code BETWEEN ...\n"
     "      C6 <periodo1> <periodo2>      SELECT * FROM student WHERE admission_term BETWEEN ...\n"
     "      C7 <grade_min> <grade_max> <term_min> <term_max>   rango multidimensional (ASO)\n"
+    "      C8                            JOIN de academic_record y course (ASO + Merkle)\n"
+    "      C9                            JOIN de student y program (ASO + Merkle)\n"
+    "      C10 <student_id>               AVG verificado con SUM ASO y COUNT AIT\n"
     "      C11 <student_id>               COUNT de calificaciones menores que 6 (ASO)\n"
     "      C12 <student_id> <evaluation_type>  COUNT verificable ASO (sin leer filas MySQL)\n"
     "      C13 <student_id>               MIN verificable como rango grade <= minimo (ASO)\n"
@@ -109,6 +112,26 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         check_bounds(out.query);
         return out;
     }
+    if (words[0] == "C8") {
+        expect_words(words, 1, "C8");
+        out.catalog_id = "C8";
+        out.join_courses = true;
+        return out;
+    }
+    if (words[0] == "C9") {
+        expect_words(words, 1, "C9");
+        out.catalog_id = "C9";
+        out.join_programs = true;
+        return out;
+    }
+    if (words[0] == "C10") {
+        expect_words(words, 2, "C10 <student_id>");
+        const auto student = parse_integer(words[1]);
+        out.catalog_id = "C10";
+        out.query = RangeQuery{"academic_record", "student_id", student, student};
+        out.avg_student = student;
+        return out;
+    }
     if (words[0] == "C11") {
         expect_words(words, 2, "C11 <student_id>");
         const auto student = parse_integer(words[1]);
@@ -165,7 +188,7 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         return out;
     }
     throw QueryError("consulta desconocida '" + words[0] +
-                     "'; por ahora se verifican C1 a C7, C11 a C13 y 'range'");
+                     "'; por ahora se verifican C1 a C13 y 'range'");
 }
 
 /*
