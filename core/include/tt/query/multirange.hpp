@@ -9,7 +9,7 @@
 
 namespace tt::query {
 /*
- * Respuesta serializable para C7 (y rango auxiliar de C13): estado y consulta,
+ * Respuesta serializable de C7 y filtros auxiliares de C13/C14: estado y consulta,
  * dos pruebas RangeCover,
  * testigos de separacion por nodo, certificados de coprimalidad por cada
  * pareja de nodos y filas de la interseccion con pruebas Merkle.
@@ -55,14 +55,14 @@ struct MultiRangeVerification {
  *   adb     base autenticada D~ con los AIT y arboles Merkle de Setup
  *   digest  digest delta vigente que identifica los AIT admitidos
  *   pk      clave publica ASO (no se requiere la clave secreta)
- *   query   rangos de C7 o los filtros de student_id/grade de C13
+ *   query   rangos de C7 o filtros auxiliares de C13/C14
  *   store   origen de las filas reales de D (MySQL o memoria)
  *
  * Devuelve:
  *   Respuesta de interseccion y estadisticas auxiliares del probador.
  *
  * Errores:
- *   Lanza UnsupportedQuery si la forma C7/C13 o sus AIT no son validos,
+ *   Lanza UnsupportedQuery si la forma C7/C13/C14 o sus AIT no son validos,
  *   ProverError si faltan arboles o filas o hay contadores inconsistentes;
  *   propaga errores del origen de filas y de los testigos ASO.
  */
@@ -71,16 +71,16 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
                                   const aso::PublicKey& pk, const MultiRangeQuery& query,
                                   db::RowStore& store);
 /*
- * Verify de interseccion para C7/C13: autentica ambos RangeCover contra
- * delta, revisa cada fila
- * con Merkle y sus predicados, y valida los testigos ASO de separacion y
+ * Verify de interseccion para C7/C13/C14: autentica ambos RangeCover
+ * contra delta, revisa cada fila con Merkle y sus predicados, y valida
+ * los testigos ASO de separacion y
  * coprimalidad para descartar identificadores comunes omitidos.
  *
  * Parametros:
  *   digest    digest delta vigente del propietario
  *   pk        clave publica ASO, cuya huella debe verificarse contra delta
  *             antes de invocar esta funcion
- *   asked     consulta C7 o consulta de rango auxiliar de C13
+ *   asked     consulta C7 o filtro auxiliar de C13/C14
  *   response  respuesta y pruebas recibidas del servidor
  *
  * Devuelve:

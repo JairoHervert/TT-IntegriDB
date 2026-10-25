@@ -95,6 +95,7 @@ struct ParsedQuery {
     bool join_courses = false;       // C8: JOIN academic_record/course sin parametros
     std::optional<std::int64_t> avg_student; // C10: AVG(grade)
     std::optional<std::int64_t> min_student;  // C13: MIN(grade) de un alumno
+    std::optional<std::int64_t> sum_credits_student; // C14: SUM(credits_tenths) tras JOIN
 };
 
 // La consulta esta mal escrita (forma desconocida, numero invalido, lo > hi...).

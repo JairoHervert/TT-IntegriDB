@@ -22,6 +22,7 @@ constexpr std::uint8_t kKindCount = 3;
 constexpr std::uint8_t kKindAverage = 4;
 constexpr std::uint8_t kKindJoin = 5;
 constexpr std::uint8_t kKindJoinCourse = 6;  // C8, separado del tipo C9
+constexpr std::uint8_t kKindSumJoinCourse = 7;  // C14, C7 + JOIN filtrado
 constexpr std::uint32_t kMaxCountReferences = 1000000; // limite de proteccion de recursos
 constexpr std::size_t kMaxWitnesses = 4096;
 
@@ -717,4 +718,113 @@ JoinCourseResponse load_join_course_response(const std::filesystem::path& path) 
     catch (const ResponseFormatError& e) { throw ResponseFormatError(path.string() + ": " + e.what()); }
 }
 
+}  // namespace tt::query
+
+
+namespace tt::query {
+/*
+ * Codifica C14: estado/alumno, C7, RangeCover course, Split, Bezout y Merkle.
+ * La SUM no se incluye porque el Verifier la obtiene de las filas autenticadas.
+ *
+ * Parametros:
+ *   resp  respuesta C14 del Prover
+ *
+ * Devuelve:
+ *   Bytes del mensaje TTRSP tipo 7.
+ */
+std::vector<unsigned char> encode_sum_join_course_response(const SumJoinCourseResponse& resp) {
+    io::BinaryWriter w;
+    w.raw(kMagic, sizeof kMagic).u32(kFormatVersion).u8(kKindSumJoinCourse);
+    w.digest(resp.state_id).i64(resp.student_id);
+    const auto filter = encode_multirange_response(resp.filtered);
+    w.bytes(filter);
+    w.u32(static_cast<std::uint32_t>(resp.course_range.entries.size()));
+    for (const auto& e : resp.course_range.entries) write_entry(w, e);
+    w.point(resp.course_complement.rest_g1).point(resp.course_complement.rest_g2);
+    w.point(resp.no_missing_courses.bezout_u).point(resp.no_missing_courses.bezout_v);
+    w.u32(static_cast<std::uint32_t>(resp.course_rows.size()));
+    for (const auto& row : resp.course_rows) write_row(w, row);
+    return w.data();
+}
+
+/*
+ * Reconstruye una respuesta C14 desde bytes no confiables.
+ * Comprueba cotas de lectura y que no existan bytes sobrantes.
+ *
+ * Parametros:
+ *   bytes  mensaje recibido del Prover
+ *
+ * Devuelve:
+ *   Estructura lista para verificar criptograficamente, aun no autenticada.
+ *
+ * Errores:
+ *   Lanza ResponseFormatError ante un mensaje malformado o truncado.
+ */
+SumJoinCourseResponse decode_sum_join_course_response(const std::vector<unsigned char>& bytes) {
+    SumJoinCourseResponse resp;
+    try {
+        io::BinaryReader r(bytes.data(), bytes.size());
+        if (r.remaining() < sizeof kMagic ||
+            !std::equal(std::begin(kMagic), std::end(kMagic), r.raw(sizeof kMagic)))
+            throw ResponseFormatError("C14: cabecera TTRSP incorrecta");
+        if (r.u32() != kFormatVersion || r.u8() != kKindSumJoinCourse)
+            throw ResponseFormatError("C14: tipo o version incorrecta");
+        resp.state_id = r.digest();
+        resp.student_id = r.i64();
+        // Cotas de recursos adicionales: C7 tiene su propio formato validado.
+        const auto filtered = r.bytes(64 * 1024 * 1024);
+        resp.filtered = decode_multirange_response(filtered);
+        const auto count = r.u32();
+        if (count > kMaxCountReferences) throw io::FormatError("C14: demasiadas entradas AIT");
+        r.require_items(count, kEntryBytes);
+        resp.course_range.entries.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) resp.course_range.entries.push_back(read_entry(r));
+        resp.course_complement = {r.g1(), r.g2()};
+        resp.no_missing_courses = {r.g2(), r.g2()};
+        const auto rows = r.u32();
+        if (rows > kMaxCountReferences) throw io::FormatError("C14: demasiadas materias");
+        r.require_items(rows, kRowBytes);
+        resp.course_rows.reserve(rows);
+        for (std::uint32_t i = 0; i < rows; ++i) resp.course_rows.push_back(read_row(r));
+        r.expect_end();
+    } catch (const io::FormatError& e) {
+        throw ResponseFormatError(std::string("formato C14 invalido: ") + e.what());
+    }
+    return resp;
+}
+
+/*
+ * Guarda una respuesta C14 con la misma escritura atomica que C8/C9.
+ *
+ * Parametros:
+ *   path  ruta del archivo de intercambio
+ *   resp  pruebas y filas autenticables de C14
+ *
+ * Devuelve:
+ *   Numero de bytes escritos.
+ */
+std::size_t save_sum_join_course_response(const std::filesystem::path& path,
+                                          const SumJoinCourseResponse& resp) {
+    const auto bytes = encode_sum_join_course_response(resp);
+    io::write_file_atomic(path, bytes);
+    return bytes.size();
+}
+
+/*
+ * Lee el archivo de respuesta C14 sin confiar en sus pruebas criptograficas.
+ *
+ * Parametros:
+ *   path  ruta del archivo de intercambio
+ *
+ * Devuelve:
+ *   Respuesta pendiente de verify_sum_join_course.
+ *
+ * Errores:
+ *   Propaga errores de lectura y ResponseFormatError al decodificar.
+ */
+SumJoinCourseResponse load_sum_join_course_response(const std::filesystem::path& path) {
+    const auto bytes = io::read_file(path);
+    try { return decode_sum_join_course_response(bytes); }
+    catch (const ResponseFormatError& e) { throw ResponseFormatError(path.string() + ": " + e.what()); }
+}
 }  // namespace tt::query

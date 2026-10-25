@@ -22,6 +22,7 @@ const char* const kQueryForms =
     "      C11 <student_id>               COUNT de calificaciones menores que 6 (ASO)\n"
     "      C12 <student_id> <evaluation_type>  COUNT verificable ASO (sin leer filas MySQL)\n"
     "      C13 <student_id>               MIN verificable como rango grade <= minimo (ASO)\n"
+    "      C14 <student_id>               SUM de creditos aprobados (C7 + JOIN ASO)\n"
     "      range <tabla> <columna> <min> <max>   rango en cualquier columna entera\n"
     "      (los periodos se escriben como en la base, por ejemplo 20241 = 2024-1)\n";
 
@@ -161,6 +162,14 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         out.min_student = student;
         return out;
     }
+    if (words[0] == "C14") {
+        expect_words(words, 2, "C14 <student_id>");
+        const auto student = parse_integer(words[1]);
+        out.catalog_id = "C14";
+        out.query = RangeQuery{"academic_record", "student_id", student, student};
+        out.sum_credits_student = student;
+        return out;
+    }
     if (words[0] == "C7") {
         expect_words(words, 5, "C7 <grade_min> <grade_max> <term_min> <term_max>");
         out.catalog_id = "C7";
@@ -188,7 +197,7 @@ ParsedQuery parse_query(const std::vector<std::string>& words) {
         return out;
     }
     throw QueryError("consulta desconocida '" + words[0] +
-                     "'; por ahora se verifican C1 a C13 y 'range'");
+                     "'; por ahora se verifican C1 a C14 y 'range'");
 }
 
 /*

@@ -17,6 +17,7 @@
 #include "tt/query/average.hpp"
 #include "tt/query/join_program.hpp"
 #include "tt/query/join_course.hpp"
+#include "tt/query/sum_join_course.hpp"
 #include "tt/query/count_intersection.hpp"
 #include "tt/scheme/digest.hpp"
 #include "tt/scheme/key_io.hpp"
@@ -181,6 +182,7 @@ int run_verify(const std::vector<std::string>& args) {
                                           opt.query.join_programs ? "SELECT * FROM student JOIN program ON student.program_id = program.program_id" :
                                           opt.query.avg_student ? ("SELECT AVG(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.avg_student)) :
                                           opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+                                          opt.query.sum_credits_student ? ("SELECT SUM(course.credits_tenths) FROM academic_record JOIN course ON academic_record.course_id = course.course_id WHERE academic_record.student_id = " + std::to_string(*opt.query.sum_credits_student) + " AND academic_record.grade >= 6") :
                                           opt.query.count ? query::to_sql(*opt.query.count) :
                                           opt.query.multi ? query::to_sql(*opt.query.multi) : query::to_sql(q)).c_str());
 
@@ -203,7 +205,16 @@ int run_verify(const std::vector<std::string>& args) {
     std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", opt.delta.string().c_str(),
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str());
     try {
-        if (opt.query.join_courses) {
+        if (opt.query.sum_credits_student) {
+            const auto q14 = query::c14_filter(*opt.query.sum_credits_student);
+            for (const auto& part : {q14.first, q14.second}) {
+                const auto spec = query::selection_tree(part, digest);
+                std::printf("[verifier] C14: AIT %s\n", spec.label().c_str());
+            }
+            const scheme::TreeSpec course{"course", "course_id", "course_id"};
+            if (!digest.find_tree(course)) throw query::UnsupportedQuery("C14: falta AIT " + course.label());
+            std::printf("[verifier] C14: AIT %s\n", course.label().c_str());
+        } else if (opt.query.join_courses) {
             for (const auto* name : {"academic_record", "course"}) {
                 const scheme::TreeSpec spec{name, "course_id", "course_id"};
                 if (!digest.find_tree(spec)) throw query::UnsupportedQuery("C8: falta AIT " + spec.label());
@@ -262,6 +273,31 @@ int run_verify(const std::vector<std::string>& args) {
     }
     std::printf("[verifier] respuesta del probador: %s (%s)\n", opt.response.string().c_str(),
                 cli::file_size_text(opt.response).c_str());
+    if (opt.query.sum_credits_student) {
+        query::SumJoinCourseResponse response;
+        try { response = query::load_sum_join_course_response(opt.response); }
+        catch (const query::ResponseFormatError& e) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C14: %s\n", e.what());
+            return kExitRejected;
+        }
+        start = Clock::now();
+        const auto v = query::verify_sum_join_course(digest, pk.aso,
+                                                    *opt.query.sum_credits_student, response);
+        if (!v.accepted) {
+            std::printf("[verifier] RESPUESTA RECHAZADA C14: %s\n", v.reason.c_str());
+            return kExitRejected;
+        }
+        if (v.credits_tenths) {
+            std::printf("[verifier] RESPUESTA VERIFICADA C14: SUM = %lld decimas de credito "
+                        "(%.1f creditos); %zu filas JOIN; %zu cursos; en %.2f s\n",
+                        static_cast<long long>(*v.credits_tenths), *v.credits_tenths / 10.0,
+                        v.joined_rows, v.course_rows, seconds_since(start));
+        } else {
+            std::printf("[verifier] RESPUESTA VERIFICADA C14: SUM = NULL "
+                        "(0 filas JOIN); en %.2f s\n", seconds_since(start));
+        }
+        return 0;
+    }
     if (opt.query.join_courses) {
         query::JoinCourseResponse response;
         try { response = query::load_join_course_response(opt.response); }

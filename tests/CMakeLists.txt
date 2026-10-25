@@ -27,6 +27,7 @@ tt_add_test(min_c13_test)
 tt_add_test(avg_c10_test)
 tt_add_test(join_c9_test)
 tt_add_test(join_c8_test)
+tt_add_test(sum_join_c14_test)
 tt_add_test(mysql_source_test)
 target_link_libraries(mysql_source_test PRIVATE tt_mysql)
 
@@ -51,5 +52,11 @@ set_tests_properties(owner_setup_rejects_unknown_plan PROPERTIES WILL_FAIL TRUE)
 # recorrido completo necesita MySQL y se prueba a mano (ver README).
 add_test(NAME prover_rejects_unknown_query COMMAND tt_prover answer C99 1)
 set_tests_properties(prover_rejects_unknown_query PROPERTIES PASS_REGULAR_EXPRESSION "consulta desconocida 'C99'")
+# PASS_REGULAR_EXPRESSION ignora el codigo de salida. Verificamos tambien
+# que la consulta invalida NO pueda terminar con codigo 0.
+add_test(NAME prover_rejects_unknown_query_exit COMMAND tt_prover answer C99 1)
+set_tests_properties(prover_rejects_unknown_query_exit PROPERTIES WILL_FAIL TRUE)
 add_test(NAME verifier_rejects_inverted_range COMMAND tt_verifier verify C4 8 6)
 set_tests_properties(verifier_rejects_inverted_range PROPERTIES PASS_REGULAR_EXPRESSION "el rango esta invertido")
+add_test(NAME verifier_rejects_inverted_range_exit COMMAND tt_verifier verify C4 8 6)
+set_tests_properties(verifier_rejects_inverted_range_exit PROPERTIES WILL_FAIL TRUE)

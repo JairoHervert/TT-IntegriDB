@@ -34,6 +34,7 @@ add_library(tt_core STATIC
   src/query/join_common.cpp
   src/query/join_program.cpp
   src/query/join_course.cpp
+  src/query/sum_join_course.cpp
   src/query/count_intersection.cpp
   src/query/response_io.cpp
 )

@@ -114,6 +114,7 @@ std::vector<std::int64_t> result_in_node(const std::vector<RowProof>& rows,
  * Comprueba las dos formas de interseccion autenticada soportadas:
  * C7: academic_record, rangos grade y term_code.
  * C13: academic_record, student_id fijo y grade <= candidato.
+ * C14: academic_record, student_id fijo y grade >= 6.
  * Los limites de ambos rangos deben estar ordenados.
  *
  * Parametros:
@@ -128,9 +129,13 @@ void check_supported_shape(const MultiRangeQuery& q) {
     const bool c7 = q.first.column == "grade" && q.second.column == "term_code";
     const bool c13 = q.first.column == "student_id" && q.first.is_equality() &&
         q.second.column == "grade" && q.second.lo == std::numeric_limits<std::int64_t>::min();
-    if (!common || (!c7 && !c13)) {
-        throw UnsupportedQuery("interseccion: solo C7 (grade/term_code) o C13 "
-                               "(student_id = ? AND grade <= candidato)");
+    const bool c14 = q.first.column == "student_id" && q.first.is_equality() &&
+        q.second.column == "grade" && q.second.lo == 6 &&
+        q.second.hi == std::numeric_limits<std::int64_t>::max();
+    if (!common || (!c7 && !c13 && !c14)) {
+        throw UnsupportedQuery("interseccion: solo C7 (grade/term_code), C13 "
+                               "(student_id = ? AND grade <= candidato) o C14 "
+                               "(student_id = ? AND grade >= 6)");
     }
 }
 }  // namespace

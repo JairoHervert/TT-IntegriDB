@@ -18,6 +18,7 @@
 #include "tt/query/average.hpp"
 #include "tt/query/join_program.hpp"
 #include "tt/query/join_course.hpp"
+#include "tt/query/sum_join_course.hpp"
 #include "tt/query/count_intersection.hpp"
 #include "tt/scheme/key_io.hpp"
 #include "tt/scheme/keys.hpp"
@@ -133,6 +134,7 @@ int run_answer(const std::vector<std::string>& args) {
                                          opt.query.join_programs ? "SELECT * FROM student JOIN program ON student.program_id = program.program_id" :
                                          opt.query.avg_student ? ("SELECT AVG(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.avg_student)) :
                                          opt.query.min_student ? ("SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*opt.query.min_student)) :
+                                         opt.query.sum_credits_student ? ("SELECT SUM(course.credits_tenths) FROM academic_record JOIN course ON academic_record.course_id = course.course_id WHERE academic_record.student_id = " + std::to_string(*opt.query.sum_credits_student) + " AND academic_record.grade >= 6") :
                                          opt.query.count ? query::to_sql(*opt.query.count) :
                                          opt.query.multi ? query::to_sql(*opt.query.multi) :
                                                            query::to_sql(opt.query.query)).c_str());
@@ -144,6 +146,24 @@ int run_answer(const std::vector<std::string>& args) {
                 static_cast<unsigned long long>(digest.state_version), short_id(digest.id()).c_str(),
                 digest.plan.c_str(), seconds_since(start));
 
+    if (opt.query.sum_credits_student) {
+        const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
+        if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint)
+            throw std::runtime_error("C14: clave publica distinta de delta");
+        mysql::DatabaseRowStore store(mysql::ConnectionConfig::from_environment());
+        start = Clock::now();
+        const auto answer = query::answer_sum_join_course(adb, digest, pk.aso,
+                                                          *opt.query.sum_credits_student, store);
+        if (opt.out.has_parent_path()) fs::create_directories(opt.out.parent_path());
+        const auto bytes = query::save_sum_join_course_response(opt.out, answer.response);
+        std::printf("[prover] C14: %zu registros aprobados, %zu cursos participantes; ASO en %.2f s\n",
+                    answer.response.filtered.rows.size(), answer.response.course_rows.size(), seconds_since(start));
+        if (answer.stale_rows)
+            std::fprintf(stderr, "[prover] AVISO: %zu filas cambiaron despues de Setup\n", answer.stale_rows);
+        std::printf("[prover] respuesta C14: %s (%s); total %.2f s\n",
+                    opt.out.string().c_str(), cli::size_text(bytes).c_str(), seconds_since(t_total));
+        return 0;
+    }
     if (opt.query.join_courses) {
         const auto pk = scheme::load_public_key(opt.keys / "public_key.txt");
         if (scheme::public_key_fingerprint(pk) != digest.key_fingerprint)

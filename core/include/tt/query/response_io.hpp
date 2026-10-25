@@ -39,6 +39,7 @@
 #include "tt/query/average.hpp"
 #include "tt/query/join_program.hpp"
 #include "tt/query/join_course.hpp"
+#include "tt/query/sum_join_course.hpp"
 
 namespace tt::query {
 
@@ -357,5 +358,57 @@ std::size_t save_join_course_response(const std::filesystem::path& path, const J
  *   Propaga errores de lectura o ResponseFormatError si es invalida.
  */
 JoinCourseResponse load_join_course_response(const std::filesystem::path& path);
+
+/*
+ * Serializa C14 con el formato TTRSP tipo 7, independiente de C7/C8/C9.
+ *
+ * Parametros:
+ *   response  pruebas C7, AIT/ASO de course y filas Merkle de la respuesta
+ *
+ * Devuelve:
+ *   Mensaje binario que no contiene una SUM declarada por el Prover.
+ */
+std::vector<unsigned char> encode_sum_join_course_response(const SumJoinCourseResponse& response);
+
+/*
+ * Decodifica una respuesta C14 potencialmente manipulada.
+ *
+ * Parametros:
+ *   bytes  mensaje binario recibido desde archivo o red
+ *
+ * Devuelve:
+ *   Respuesta no confiable, pendiente de verify_sum_join_course.
+ *
+ * Errores:
+ *   Lanza ResponseFormatError si el tipo o la estructura son invalidos.
+ */
+SumJoinCourseResponse decode_sum_join_course_response(const std::vector<unsigned char>& bytes);
+
+/*
+ * Guarda una respuesta C14 de manera atomica.
+ *
+ * Parametros:
+ *   path      ruta del archivo de intercambio
+ *   response  pruebas generadas por el Prover
+ *
+ * Devuelve:
+ *   Numero de bytes escritos.
+ */
+std::size_t save_sum_join_course_response(const std::filesystem::path& path,
+                                          const SumJoinCourseResponse& response);
+
+/*
+ * Lee un archivo de respuesta C14 y verifica su formato binario.
+ *
+ * Parametros:
+ *   path  ruta del archivo de intercambio
+ *
+ * Devuelve:
+ *   Respuesta sin verificar criptograficamente.
+ *
+ * Errores:
+ *   Propaga fallos de lectura y ResponseFormatError por formato invalido.
+ */
+SumJoinCourseResponse load_sum_join_course_response(const std::filesystem::path& path);
 
 }  // namespace tt::query
