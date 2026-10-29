@@ -17,8 +17,13 @@ namespace tt::prover {
 std::string answer_usage();
 
 /*
- * Comando answer: ProofGen. Responde una consulta de seleccion o de rango
- * con las filas de MySQL y su prueba, y guarda la respuesta en un archivo.
+ * Texto de ayuda del comando serve.
+ */
+std::string serve_usage();
+
+/*
+ * Comando answer: ProofGen de una sola consulta del catalogo (C1 a C14 o
+ * "range"); guarda la respuesta en un archivo.
  *
  * Parametros:
  *   args  argumentos que siguen a la palabra "answer"
@@ -31,5 +36,23 @@ std::string answer_usage();
  *   pasar las demas excepciones (main las convierte en mensaje y codigo 1).
  */
 int run_answer(const std::vector<std::string>& args);
+
+/*
+ * Comando serve: ejecuta el probador como servidor de red hasta recibir
+ * SIGINT o SIGTERM.
+ *
+ * Parametros:
+ *   args  argumentos que siguen a la palabra "serve"
+ *
+ * Devuelve:
+ *   0 si el servidor se detuvo normalmente; 1 si no se pudo cargar el
+ *   estado o la clave publica no corresponde a delta.
+ *
+ * Errores:
+ *   Lanza cli::UsageError si las opciones no son validas; deja pasar las
+ *   demas excepciones (por ejemplo, el puerto ocupado o TT_DB_PASS sin
+ *   definir), que main convierte en mensaje y codigo 1.
+ */
+int run_serve(const std::vector<std::string>& args);
 
 }  // namespace tt::prover

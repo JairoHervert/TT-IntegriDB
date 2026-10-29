@@ -9,6 +9,7 @@
 //   tt_owner init     init_command.cpp
 //   tt_owner setup    setup_command.cpp
 //   tt_owner catalog  catalog_command.cpp
+//   tt_owner publish  publish_command.cpp
 
 #include <cstdio>
 #include <exception>
@@ -24,7 +25,8 @@ namespace {
  * Imprime la ayuda general (la de todos los comandos) en el flujo dado.
  */
 void print_usage(std::FILE* out) {
-    std::fprintf(out, "Uso:\n%s\n%s\n%s", tt::owner::kInitUsage, tt::owner::kSetupUsage, tt::owner::kCatalogUsage);
+    std::fprintf(out, "Uso:\n%s\n%s\n%s\n%s", tt::owner::kInitUsage, tt::owner::kSetupUsage,
+                 tt::owner::kPublishUsage, tt::owner::kCatalogUsage);
 }
 
 }  // namespace
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
         if (args[0] == "init") return tt::owner::run_init(rest);
         if (args[0] == "setup") return tt::owner::run_setup(rest);
         if (args[0] == "catalog") return tt::owner::run_catalog(rest);
+        if (args[0] == "publish") return tt::owner::run_publish(rest);
         throw tt::owner::UsageError("comando desconocido: " + args[0]);
     } catch (const tt::owner::UsageError& e) {
         std::fflush(stdout);  // que lo ya impreso salga antes que el error

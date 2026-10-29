@@ -42,6 +42,10 @@ delta*.txt
 # --- Respuestas generadas por tt_prover answer ---
 respuesta*.bin
 
+# --- Carpetas que prepara tt_owner publish para cada modulo ---
+# Contienen D~ y la clave publica (varios MB); se regeneran con publish.
+deploy/
+
 # --- Claves generadas por tt_owner init ---
 # La clave secreta sk_D nunca debe subirse; la publica se regenera con Init
 # y pesa varios MB, asi que tampoco va al repositorio.

@@ -194,4 +194,44 @@ std::string to_sql(const CountQuery& query);
  */
 scheme::TreeSpec selection_tree(const RangeQuery& query, const scheme::DatabaseDigest& digest);
 
+// Procedimiento con el que se responde y se verifica una consulta. Cada
+// valor corresponde a un par ProofGen/Verify del nucleo y a un tipo de
+// respuesta TTRSP.
+enum class QueryKind {
+    kSelection,      // C1 a C6 y "range": seleccion o rango en una columna
+    kMultiRange,     // C7: rango en dos columnas (interseccion ASO)
+    kJoinCourse,     // C8: academic_record JOIN course
+    kJoinProgram,    // C9: student JOIN program
+    kAverage,        // C10: AVG(grade) de un alumno
+    kCount,          // C11 y C12: COUNT de una interseccion
+    kMinimum,        // C13: MIN(grade) de un alumno
+    kSumJoinCourse,  // C14: SUM de creditos aprobados tras el JOIN
+};
+
+/*
+ * Clasifica una consulta ya leida segun el procedimiento con que se
+ * responde y se verifica. Es la unica funcion que interpreta los campos
+ * opcionales de ParsedQuery, para que el probador y el verificador decidan
+ * siempre lo mismo.
+ *
+ * Parametros:
+ *   query  consulta devuelta por parse_query
+ *
+ * Devuelve:
+ *   El tipo de procedimiento (ver QueryKind).
+ */
+QueryKind query_kind(const ParsedQuery& query);
+
+/*
+ * Escribe cualquier consulta del catalogo como texto SQL, para mostrarla
+ * en los mensajes de los programas. No accede a MySQL.
+ *
+ * Parametros:
+ *   query  consulta devuelta por parse_query
+ *
+ * Devuelve:
+ *   La sentencia SQL equivalente.
+ */
+std::string to_sql(const ParsedQuery& query);
+
 }  // namespace tt::query

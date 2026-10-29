@@ -247,4 +247,48 @@ scheme::TreeSpec selection_tree(const RangeQuery& q, const scheme::DatabaseDiges
     return spec;
 }
 
+
+/*
+ * Implementacion: el orden de las comprobaciones es el mismo que usaban los
+ * comandos del probador y del verificador antes de unificarse.
+ */
+QueryKind query_kind(const ParsedQuery& q) {
+    if (q.sum_credits_student) return QueryKind::kSumJoinCourse;
+    if (q.join_courses) return QueryKind::kJoinCourse;
+    if (q.join_programs) return QueryKind::kJoinProgram;
+    if (q.avg_student) return QueryKind::kAverage;
+    if (q.min_student) return QueryKind::kMinimum;
+    if (q.count) return QueryKind::kCount;
+    if (q.multi) return QueryKind::kMultiRange;
+    return QueryKind::kSelection;
+}
+
+/*
+ * Implementacion: una sentencia por tipo de consulta; los tipos que ya
+ * tenian su propio to_sql lo reutilizan.
+ */
+std::string to_sql(const ParsedQuery& q) {
+    switch (query_kind(q)) {
+        case QueryKind::kSumJoinCourse:
+            return "SELECT SUM(course.credits_tenths) FROM academic_record JOIN course ON "
+                   "academic_record.course_id = course.course_id WHERE academic_record.student_id = " +
+                   std::to_string(*q.sum_credits_student) + " AND academic_record.grade >= 6";
+        case QueryKind::kJoinCourse:
+            return "SELECT * FROM academic_record JOIN course ON academic_record.course_id = course.course_id";
+        case QueryKind::kJoinProgram:
+            return "SELECT * FROM student JOIN program ON student.program_id = program.program_id";
+        case QueryKind::kAverage:
+            return "SELECT AVG(grade) FROM academic_record WHERE student_id = " + std::to_string(*q.avg_student);
+        case QueryKind::kMinimum:
+            return "SELECT MIN(grade) FROM academic_record WHERE student_id = " + std::to_string(*q.min_student);
+        case QueryKind::kCount:
+            return to_sql(*q.count);
+        case QueryKind::kMultiRange:
+            return to_sql(*q.multi);
+        case QueryKind::kSelection:
+            break;
+    }
+    return to_sql(q.query);
+}
+
 }  // namespace tt::query

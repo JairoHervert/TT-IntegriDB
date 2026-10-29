@@ -28,6 +28,9 @@ tt_add_test(avg_c10_test)
 tt_add_test(join_c9_test)
 tt_add_test(join_c8_test)
 tt_add_test(sum_join_c14_test)
+tt_add_test(service_test)
+tt_add_test(net_test)
+target_link_libraries(net_test PRIVATE tt_net)
 tt_add_test(mysql_source_test)
 target_link_libraries(mysql_source_test PRIVATE tt_mysql)
 
@@ -60,3 +63,22 @@ add_test(NAME verifier_rejects_inverted_range COMMAND tt_verifier verify C4 8 6)
 set_tests_properties(verifier_rejects_inverted_range PROPERTIES PASS_REGULAR_EXPRESSION "el rango esta invertido")
 add_test(NAME verifier_rejects_inverted_range_exit COMMAND tt_verifier verify C4 8 6)
 set_tests_properties(verifier_rejects_inverted_range_exit PROPERTIES WILL_FAIL TRUE)
+
+# Red: el servidor necesita delta y D~; sin ellos termina con un mensaje
+# claro y codigo 1, antes de abrir el puerto.
+add_test(NAME prover_serve_requires_state COMMAND tt_prover serve --state ${CMAKE_CURRENT_BINARY_DIR}/no_state)
+set_tests_properties(prover_serve_requires_state PROPERTIES PASS_REGULAR_EXPRESSION "no hay estado autenticado")
+add_test(NAME prover_serve_requires_state_exit COMMAND tt_prover serve --state ${CMAKE_CURRENT_BINARY_DIR}/no_state)
+set_tests_properties(prover_serve_requires_state_exit PROPERTIES WILL_FAIL TRUE)
+# Una direccion con esquema es un error de uso.
+add_test(NAME verifier_rejects_url_address COMMAND tt_verifier query C4 6 8 --server http://prover:7070)
+set_tests_properties(verifier_rejects_url_address PROPERTIES PASS_REGULAR_EXPRESSION "sin 'http://'")
+# Sin probador escuchando, ping termina con el codigo 4 (sin respuesta).
+add_test(NAME verifier_ping_without_server COMMAND tt_verifier ping --server 127.0.0.1:1)
+set_tests_properties(verifier_ping_without_server PROPERTIES PASS_REGULAR_EXPRESSION "no se pudo conectar")
+add_test(NAME verifier_ping_without_server_exit COMMAND tt_verifier ping --server 127.0.0.1:1)
+set_tests_properties(verifier_ping_without_server_exit PROPERTIES WILL_FAIL TRUE)
+# publish no copia nada si falta el estado.
+add_test(NAME owner_publish_requires_state
+         COMMAND tt_owner publish --state ${CMAKE_CURRENT_BINARY_DIR}/no_state --out ${CMAKE_CURRENT_BINARY_DIR}/no_deploy)
+set_tests_properties(owner_publish_requires_state PROPERTIES PASS_REGULAR_EXPRESSION "falta")

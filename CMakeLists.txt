@@ -4,10 +4,12 @@
 #   core/      biblioteca compartida con el esquema (sin MySQL ni red)
 #   cli/       utilidades de linea de comandos de los tres programas
 #   mysql/     adaptador de MySQL (libmysqlclient) para leer la base
+#   net/       comunicacion por red entre probador y verificador (HTTP)
 #   owner/     Propietario de datos: Init + Setup (se ejecuta una vez)
 #   prover/    modulo probador (bloque Servidor)
 #   verifier/  Cliente SQL + modulo verificador (bloque Cliente)
 #   tests/     pruebas del nucleo
+#   third_party/  bibliotecas externas copiadas (cpp-httplib)
 #
 # Compilar (en la VM, desde la raiz del repositorio):
 #   cmake -S . -B build
@@ -61,6 +63,7 @@ set(TT_WARNINGS -Wall -Wextra)
 add_subdirectory(core)
 add_subdirectory(cli)
 add_subdirectory(mysql)
+add_subdirectory(net)
 add_subdirectory(owner)
 add_subdirectory(prover)
 add_subdirectory(verifier)

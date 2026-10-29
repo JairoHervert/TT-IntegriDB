@@ -4,11 +4,13 @@
 // del verificador, obtener del Servidor SQL las filas necesarias y generar
 // el par (R, pi) usando D~. Nunca conoce el secreto s ni la clave de Enc.
 //
-// Por ahora la respuesta se entrega como archivo; cuando se conecte la red,
-// el mismo contenido sera el mensaje al verificador.
+// La respuesta llega al verificador por la red (serve) o como archivo
+// (answer); en ambos casos son los mismos bytes, generados por
+// query::answer_query.
 //
 // Comandos (cada uno en su archivo):
-//   tt_prover answer   answer_command.cpp
+//   tt_prover serve    serve_command.cpp   servidor de red
+//   tt_prover answer   answer_command.cpp  una consulta a un archivo
 
 #include <cstdio>
 #include <exception>
@@ -23,7 +25,9 @@ namespace {
 /*
  * Imprime la ayuda general en el flujo dado.
  */
-void print_usage(std::FILE* out) { std::fprintf(out, "Uso:\n%s", tt::prover::answer_usage().c_str()); }
+void print_usage(std::FILE* out) {
+    std::fprintf(out, "Uso:\n%s\n%s", tt::prover::serve_usage().c_str(), tt::prover::answer_usage().c_str());
+}
 
 }  // namespace
 
@@ -43,6 +47,7 @@ int main(int argc, char** argv) {
             return args.empty() ? 2 : 0;
         }
         const std::vector<std::string> rest(args.begin() + 1, args.end());
+        if (args[0] == "serve") return tt::prover::run_serve(rest);
         if (args[0] == "answer") return tt::prover::run_answer(rest);
         throw tt::cli::UsageError("comando desconocido: " + args[0]);
     } catch (const tt::cli::UsageError& e) {

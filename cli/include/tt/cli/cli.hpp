@@ -9,6 +9,8 @@
 //   1  error al ejecutar el comando
 //   2  error de uso (se muestra la ayuda)
 //   3  (solo tt_verifier) la respuesta del servidor fue rechazada
+//   4  (solo tt_verifier) el probador no entrego respuesta (red o error del
+//      servidor)
 
 #pragma once
 

@@ -4,11 +4,13 @@
 // probador, recibir (R, pi) y evaluar Verify(delta, Q, R, pi) con la clave
 // publica pk. Entrega R al Cliente SQL junto con el veredicto.
 //
-// Por ahora la respuesta del probador llega como archivo; cuando se conecte
-// la red, el mismo contenido llegara como mensaje.
+// La respuesta del probador llega por la red (query) o desde un archivo
+// (verify); en los dos casos la revisa query::verify_query.
 //
 // Comandos (cada uno en su archivo):
-//   tt_verifier verify   verify_command.cpp
+//   tt_verifier query    query_command.cpp    consulta por la red y verifica
+//   tt_verifier verify   verify_command.cpp   verifica una respuesta guardada
+//   tt_verifier ping     ping_command.cpp     conexion y estado del probador
 
 #include <cstdio>
 #include <exception>
@@ -23,7 +25,10 @@ namespace {
 /*
  * Imprime la ayuda general en el flujo dado.
  */
-void print_usage(std::FILE* out) { std::fprintf(out, "Uso:\n%s", tt::verifier::verify_usage().c_str()); }
+void print_usage(std::FILE* out) {
+    std::fprintf(out, "Uso:\n%s\n%s\n%s", tt::verifier::query_usage().c_str(), tt::verifier::verify_usage().c_str(),
+                 tt::verifier::ping_usage().c_str());
+}
 
 }  // namespace
 
@@ -35,6 +40,7 @@ void print_usage(std::FILE* out) { std::fprintf(out, "Uso:\n%s", tt::verifier::v
  *      soportada, clave publica que no corresponde a delta...)
  *   2  error de uso (se muestra la ayuda)
  *   3  la respuesta del servidor fue rechazada
+ *   4  el probador no entrego respuesta (red o error del servidor)
  */
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);  // cada linea sale en orden con los mensajes de stderr
@@ -45,7 +51,9 @@ int main(int argc, char** argv) {
             return args.empty() ? 2 : 0;
         }
         const std::vector<std::string> rest(args.begin() + 1, args.end());
+        if (args[0] == "query") return tt::verifier::run_query(rest);
         if (args[0] == "verify") return tt::verifier::run_verify(rest);
+        if (args[0] == "ping") return tt::verifier::run_ping(rest);
         throw tt::cli::UsageError("comando desconocido: " + args[0]);
     } catch (const tt::cli::UsageError& e) {
         std::fflush(stdout);

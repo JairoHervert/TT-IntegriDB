@@ -21,17 +21,22 @@ core/                     núcleo compartido: el esquema (sin MySQL ni red)
   include/tt/io/            archivos binarios y escritura atómica
   include/tt/scheme/        Init, Setup, digest δ, base autenticada D~,
                             planes de árboles y archivos de claves
-  include/tt/query/         consultas C1–C7: ProofGen, Verify y el formato
-                            de la respuesta (R, π)
+  include/tt/query/         consultas C1–C14: ProofGen, Verify, el formato
+                            de la respuesta (R, π) y los servicios únicos
+                            answer_query / verify_query
 cli/                      utilidades de línea de comandos de los tres programas
 mysql/                    adaptador de MySQL (libmysqlclient): lectura de la
                           base para Setup y de filas para el probador
-owner/                    Propietario de datos: init, setup y catalog
-prover/                   módulo probador (bloque Servidor): answer
-verifier/                 Cliente SQL + módulo verificador (bloque Cliente): verify
-tests/                    pruebas del núcleo y del adaptador
+net/                      comunicación por red probador ↔ verificador (HTTP)
+third_party/cpp-httplib/  biblioteca HTTP de un archivo (copia fija, MIT)
+owner/                    Propietario de datos: init, setup, publish y catalog
+prover/                   módulo probador (bloque Servidor): serve y answer
+verifier/                 Cliente SQL + módulo verificador (bloque Cliente):
+                          query, verify y ping
+tests/                    pruebas del núcleo, de la red y del adaptador
 docs/setup.md             decisiones de Setup y su justificación
 docs/consultas.md         decisiones de ProofGen/Verify (C1–C6) y su justificación
+docs/red.md               separación de los módulos y comunicación por red
 ```
 
 Los datos incluyen 5 carreras (ISC, IIA, LCD, ITI, ICS), cada una con su
@@ -45,8 +50,12 @@ Toda la lógica criptográfica del esquema vive en `core/`, que es una
 biblioteca sin dependencias de MySQL ni de red. Los tres programas
 (`owner`, `prover`, `verifier`) son delgados: leen o escriben datos
 (MySQL, archivos, red) y llaman al núcleo. La lectura de la base entra al
-núcleo por un puerto (`db::Source`); el adaptador de MySQL está en
-`mysql/` y las pruebas usan uno en memoria. Así cada función del esquema
+núcleo por dos puertos (`db::Source` y `db::RowStore`); el adaptador de
+MySQL está en `mysql/` y las pruebas usan uno en memoria. La red es otro
+adaptador (`net/`): el núcleo recibe y entrega bytes, y los dos programas
+usan los mismos servicios `query::answer_query` (probador) y
+`query::verify_query` (verificador), sea que la respuesta viaje por la red
+o en un archivo. Así cada función del esquema
 (Init, Setup, ProofGen, Verify) se puede probar por separado (RNF02) y los
 tres actores quedan separados (RNF01).
 
@@ -135,9 +144,51 @@ export TT_DB_PASS=app_pass_2026
 Referencia medida en la VM de pruebas (base por defecto, q = 16000):
 `queries` 1.24 s y D~ de 2.5 MB; `full` 56.54 s y D~ de 64.1 MB.
 
-## Responder y verificar consultas (C1–C6)
+## Entregar a cada módulo lo suyo (publish)
 
-Con el estado de Setup (`setup/`) y las claves (`keys/`):
+```bash
+./build/owner/tt_owner publish --keys keys --state setup --out deploy
+```
+
+Comprueba que δ, D~ y la clave pública sean del mismo Setup y copia:
+
+- `deploy/prover/`: `delta.txt`, `authenticated_db.bin` y `public_key.txt`
+  (lo que necesita el bloque Servidor).
+- `deploy/verifier/`: `delta.txt` y `public_key.txt` (el bloque Cliente
+  nunca recibe D~).
+
+La clave secreta nunca se copia. `deploy/` no se sube al repositorio.
+
+## Probador y verificador por la red
+
+En una terminal, el probador como servidor (se detiene con Ctrl+C):
+
+```bash
+export TT_DB_PASS=app_pass_2026
+./build/prover/tt_prover serve --state deploy/prover --keys deploy/prover
+```
+
+En otra terminal, el verificador envía la consulta, recibe (R, π) y la
+verifica:
+
+```bash
+./build/verifier/tt_verifier ping --delta deploy/verifier/delta.txt
+./build/verifier/tt_verifier query C4 6 8 --keys deploy/verifier --delta deploy/verifier/delta.txt
+./build/verifier/tt_verifier query C14 1 --keys deploy/verifier --delta deploy/verifier/delta.txt
+```
+
+- El probador escucha en el puerto 7070 (`--port`) de todas las
+  interfaces (`--host`). Carga δ, D~ y la clave pública una sola vez.
+- El verificador usa `--server host:puerto` o la variable `TT_PROVER_ADDR`
+  (por omisión `127.0.0.1:7070`). `--save archivo` guarda también la
+  respuesta recibida. Códigos de salida: 0 verificada, 3 rechazada, 1 no
+  se pudo verificar, 4 el probador no entregó respuesta.
+- El protocolo, las decisiones y cómo probarlo desde otra máquina están en
+  `docs/red.md`.
+
+## Responder y verificar consultas con archivos
+
+Sin red, con el estado de Setup (`setup/`) y las claves (`keys/`):
 
 ```bash
 export TT_DB_PASS=app_pass_2026
@@ -159,8 +210,8 @@ export TT_DB_PASS=app_pass_2026
   `C4 <min> <max>` (calificación), `C5 <p1> <p2>` (periodo),
   `C6 <p1> <p2>` (periodo de ingreso) y `range <tabla> <columna> <min> <max>`.
   Una consulta sin AIT en δ se rechaza como no soportada (RNF05).
-- Por ahora la respuesta viaja como archivo; con la red será el mismo
-  contenido. La justificación y los costos medidos están en
+- El archivo contiene exactamente los bytes que el probador enviaría por la
+  red. La justificación y los costos medidos están en
   `docs/consultas.md`.
 
 Para ver que el esquema detecta una base alterada en el servidor, cambia

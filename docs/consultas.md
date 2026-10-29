@@ -18,8 +18,9 @@ export TT_DB_PASS=app_pass_2026
 El probador lee D~ y δ (lo que le entregó el propietario), toma de MySQL
 las filas necesarias y escribe la respuesta (R, π) en un archivo. El
 verificador, que solo tiene δ y la clave pública, acepta o rechaza esa
-respuesta. Hoy la respuesta viaja como archivo; cuando se conecte la red,
-esos mismos bytes serán el mensaje y el núcleo no cambia.
+respuesta. La respuesta puede viajar como archivo o por la red
+(`tt_prover serve` y `tt_verifier query`, ver `docs/red.md`); en los dos
+casos son los mismos bytes y el núcleo no cambia.
 
 Consultas que se aceptan (las mismas en los dos programas):
 

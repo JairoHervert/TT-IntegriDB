@@ -37,6 +37,8 @@ add_library(tt_core STATIC
   src/query/sum_join_course.cpp
   src/query/count_intersection.cpp
   src/query/response_io.cpp
+  src/query/prover_service.cpp
+  src/query/verifier_service.cpp
 )
 
 target_include_directories(tt_core PUBLIC include)
