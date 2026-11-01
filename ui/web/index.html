@@ -1,0 +1,148 @@
+<!doctype html>
+<!--
+  index.html - interfaz del caso de estudio (TT 2026-B143)
+
+  La sirve 'tt_verifier ui'. La pagina no verifica nada por su cuenta:
+  envia cada consulta a /api/query y muestra el veredicto que decidio el
+  verificador con delta y la clave publica. Los datos de la base se
+  escriben siempre como texto (textContent), nunca como HTML.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expedientes verificables</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <h1>Expedientes verificables</h1>
+        <p>Control escolar con respuestas comprobadas criptográficamente</p>
+      </div>
+      <div class="prover-status" id="prover-status" data-state="checking" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-text">
+          <strong id="prover-status-title">Revisando el probador…</strong>
+          <span id="prover-status-detail"></span>
+        </span>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Vistas">
+      <button type="button" class="tab" id="tab-record" data-view="record" aria-selected="true">Expediente del alumno</button>
+      <button type="button" class="tab" id="tab-catalog" data-view="catalog" aria-selected="false">Catálogo de consultas</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Vista 1: expediente de un alumno armado con consultas verificadas -->
+    <section class="view" id="view-record" aria-labelledby="tab-record">
+      <form class="lookup" id="record-form" autocomplete="off">
+        <label for="record-enrollment">Boleta del alumno</label>
+        <div class="lookup-row">
+          <input id="record-enrollment" name="enrollment" inputmode="numeric" pattern="[0-9]{1,18}" maxlength="18"
+                 placeholder="Por ejemplo 2020650001" required>
+          <button type="submit" class="primary" id="record-submit">Consultar expediente</button>
+        </div>
+        <p class="hint">Cada parte del expediente es una consulta distinta al probador, y cada respuesta se verifica antes de mostrarse.</p>
+      </form>
+
+      <div class="record-layout">
+        <article class="sheet record-sheet" id="record-sheet" hidden>
+          <div class="sheet-head">
+            <div class="identity">
+              <h2 id="student-name"></h2>
+              <dl class="facts">
+                <div><dt>Boleta</dt><dd id="student-enrollment"></dd></div>
+                <div><dt>Programa</dt><dd id="student-program"></dd></div>
+                <div><dt>Ingreso</dt><dd id="student-admission"></dd></div>
+              </dl>
+              <p class="part-status" id="identity-status"></p>
+            </div>
+            <div class="stamp-slot" id="record-stamp"></div>
+          </div>
+
+          <section class="sheet-section" id="indicators-section" aria-labelledby="indicators-title">
+            <h3 id="indicators-title">Indicadores</h3>
+            <div class="indicators" id="indicators"></div>
+          </section>
+
+          <section class="sheet-section" id="kardex-section" aria-labelledby="kardex-title">
+            <div class="section-head">
+              <h3 id="kardex-title">Historial académico</h3>
+              <p class="part-status" id="kardex-status"></p>
+            </div>
+            <div class="table-wrap">
+              <table class="data kardex" id="kardex">
+                <thead>
+                  <tr>
+                    <th scope="col">Periodo</th>
+                    <th scope="col">Clave</th>
+                    <th scope="col">Unidad de aprendizaje</th>
+                    <th scope="col" class="num">Créditos</th>
+                    <th scope="col">Evaluación</th>
+                    <th scope="col" class="num">Calificación</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </article>
+
+        <div class="record-empty" id="record-empty">
+          <p>Escribe una boleta para armar el expediente. La ficha, el historial y cada indicador se piden por separado al probador y se verifican contra δ.</p>
+          <p class="samples">Boletas de la base de ejemplo:
+            <button type="button" class="plain sample" data-enrollment="2020650001">2020650001</button>
+            <button type="button" class="plain sample" data-enrollment="2021630001">2021630001</button>
+            <button type="button" class="plain sample" data-enrollment="2025660001">2025660001</button>
+          </p>
+        </div>
+
+        <aside class="ledger" aria-labelledby="ledger-title">
+          <h2 id="ledger-title">Verificación</h2>
+          <p class="ledger-note" id="ledger-note">Aquí aparece cada consulta que se hizo para armar el expediente, con su veredicto y sus tiempos.</p>
+          <ol class="ledger-list" id="ledger-list"></ol>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Vista 2: cualquier consulta del catalogo -->
+    <section class="view" id="view-catalog" aria-labelledby="tab-catalog" hidden>
+      <div class="catalog-layout">
+        <nav class="catalog-list" id="catalog-list" aria-label="Consultas del catálogo"></nav>
+
+        <div class="catalog-main">
+          <form class="sheet query-form" id="query-form" autocomplete="off">
+            <div class="query-head">
+              <span class="query-id" id="query-id"></span>
+              <h2 id="query-title"></h2>
+            </div>
+            <p class="query-what" id="query-what"></p>
+            <div class="params" id="query-params"></div>
+            <div class="preview" id="query-preview" aria-live="polite">
+              <code class="sql" id="query-sql"></code>
+              <p class="trees" id="query-trees"></p>
+            </div>
+            <p class="query-note" id="query-note"></p>
+            <button type="submit" class="primary" id="query-submit">Consultar y verificar</button>
+          </form>
+
+          <section class="sheet result" id="query-result" hidden aria-live="polite">
+            <div class="verdict" id="result-verdict"></div>
+            <div class="timing" id="result-timing"></div>
+            <div class="result-body" id="result-body"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    <p>La verificación ocurre en <code>tt_verifier</code>, con δ y la clave pública que publicó el propietario. Esta página solo muestra su veredicto.</p>
+    <p id="local-state"></p>
+  </footer>
+</body>
+</html>

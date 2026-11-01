@@ -1,0 +1,37 @@
+# Lo que NO entra al contexto de construccion de las imagenes. El
+# Dockerfile ademas copia solo las carpetas del codigo; este archivo evita
+# que lo demas siquiera se envie a Docker.
+#
+# Lo mas importante: las claves. secret_key.txt (sk_D) es solo del
+# propietario y nunca debe quedar dentro de una imagen, ni siquiera en la
+# etapa de compilacion. delta, D~ y pk tampoco van en la imagen: se montan
+# desde deploy/ al ejecutar.
+keys/
+secret_key*.txt
+public_key*.txt
+setup/
+setup_*/
+deploy/
+authenticated_db*.bin
+delta*.txt
+respuesta*.bin
+.env
+*.pem
+*.key
+
+# Compilaciones locales (la imagen compila desde cero).
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+
+# Datos y herramientas de la base: los usa el contenedor de MySQL, no la
+# compilacion.
+academic_records_db/
+
+# Control de versiones, editores y notas personales.
+.git/
+.vscode/
+.idea/
+*.swp
+comands_for_me.txt

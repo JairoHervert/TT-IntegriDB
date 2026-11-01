@@ -5,16 +5,10 @@
 // verificador (protocolo en net/include/tt/net/protocol.hpp). Se detiene con
 // Ctrl+C o con SIGTERM (por ejemplo, 'docker stop').
 
-#include <atomic>
-#include <csignal>
 #include <cstdio>
-#include <ctime>
 #include <filesystem>
 #include <string>
-#include <thread>
 #include <vector>
-
-#include <pthread.h>
 
 #include "commands.hpp"
 #include "prover_state.hpp"
@@ -109,17 +103,6 @@ void log_request(const net::RequestRecord& r) {
     }
 }
 
-/*
- * Conjunto de senales con las que se detiene el servidor.
- */
-sigset_t stop_signals() {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGINT);
-    sigaddset(&set, SIGTERM);
-    return set;
-}
-
 }  // namespace
 
 /*
@@ -152,7 +135,7 @@ std::string serve_usage() {
  * responde, cada consulta que lea filas lo reintentara), abre el puerto y
  * atiende peticiones hasta recibir SIGINT o SIGTERM. Las senales se
  * bloquean antes de crear los hilos del servidor y las espera un hilo
- * dedicado, que es quien detiene el servidor.
+ * dedicado (cli::run_until_signal), que es quien detiene el servidor.
  */
 int run_serve(const std::vector<std::string>& args) {
     const ServeOptions opt = parse_serve_options(args);
@@ -206,35 +189,14 @@ int run_serve(const std::vector<std::string>& args) {
 
     // Las senales se bloquean aqui para que los hilos del servidor las
     // hereden bloqueadas y solo el hilo vigilante las reciba.
-    const sigset_t signals = stop_signals();
-    pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+    cli::block_stop_signals();
 
     net::ProverServer server(context, opt.server, log_request);
     const int port = server.bind();
     std::printf("[prover] escuchando en %s:%d (POST %s, GET %s); Ctrl+C para detener\n", opt.server.host.c_str(), port,
                 net::kQueryPath, net::kHealthPath);
 
-    std::atomic<bool> finished{false};
-    std::thread watcher([&] {
-        const timespec wait{0, 250 * 1000 * 1000};
-        while (!finished.load()) {
-            const int sig = sigtimedwait(&signals, nullptr, &wait);
-            if (sig == SIGINT || sig == SIGTERM) {
-                std::printf("[prover] senal %s recibida; deteniendo el servidor\n", sig == SIGINT ? "SIGINT" : "SIGTERM");
-                server.stop();
-                return;
-            }
-        }
-    });
-    try {
-        server.run();
-    } catch (...) {
-        finished = true;
-        watcher.join();
-        throw;
-    }
-    finished = true;
-    watcher.join();
+    cli::run_until_signal([&] { server.run(); }, [&] { server.stop(); }, "prover");
     std::printf("[prover] servidor detenido\n");
     return 0;
 }

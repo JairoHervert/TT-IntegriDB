@@ -68,7 +68,7 @@ Paso 1. Copiar TT-IntegriDB a una carpeta normal de Linux (no trabajar dentro
 Paso 2. Levantar la base. La primera vez crea el esquema y carga los
    500 alumnos de las 5 carreras, con las materias en orden de su plan:
 
-    docker compose up -d
+    docker compose up -d db
     docker compose ps
 
    Repite "docker compose ps" hasta que diga "healthy".
@@ -88,7 +88,7 @@ Si algo sale mal:
      desde cero con el comando de abajo.
    - Reiniciar desde cero (borra los datos y vuelve a ejecutar init/):
 
-    docker compose down -v && docker compose up -d
+    docker compose down -v && docker compose up -d db
 
    - "Access denied for user 'app_user'" aunque diga "healthy": el volumen
      de datos quedó de un intento anterior que no terminó, así que Docker
@@ -105,7 +105,7 @@ Si algo sale mal:
      levantar el contenedor (la RAM del equipo se satura).
 
 Apagar sin perder datos:              docker compose down
-Volver a encender (datos intactos):   docker compose up -d
+Volver a encender (datos intactos):   docker compose up -d db
 
 
 Comandos listos para usar
@@ -118,7 +118,7 @@ Comandos listos para usar
 2) Cambiar los datos de Docker a 1000 alumnos y recargar (usa --size large para 2000):
 
     python3 academic_records_db/tools/generate_synthetic_data.py --size medium --data-only --output academic_records_db/init/02_seed_data.sql
-    docker compose down -v && docker compose up -d
+    docker compose down -v && docker compose up -d db
 
 3) Repoblar la base que ya está corriendo SIN borrar el volumen de Docker
    (el archivo vacía las tablas antes de insertar, se puede repetir):

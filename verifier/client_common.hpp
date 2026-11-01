@@ -1,10 +1,10 @@
 // client_common.hpp
 //
 // Partes comunes de los comandos del verificador que revisan una respuesta:
-// verify (la respuesta esta en un archivo) y query (la respuesta llega por
-// la red). Los dos cargan delta y la clave publica de la misma forma,
-// revisan que la consulta este soportada y muestran el veredicto con el
-// mismo formato; solo cambia de donde salen los bytes.
+// verify (la respuesta esta en un archivo), query (la respuesta llega por
+// la red) y ui (la interfaz del caso de estudio). Los tres cargan delta y la
+// clave publica de la misma forma; verify y query ademas revisan que la
+// consulta este soportada y muestran el veredicto con el mismo formato.
 
 #pragma once
 
@@ -61,6 +61,44 @@ bool parse_common_option(const std::vector<std::string>& args, std::size_t& i, C
 query::ParsedQuery parse_query_words(const std::vector<std::string>& words);
 
 /*
+ * Revisa que existan delta y public_key.txt; si falta alguno, explica que
+ * opcion corregir.
+ *
+ * Parametros:
+ *   keys   carpeta de --keys
+ *   delta  archivo de --delta
+ *
+ * Devuelve:
+ *   0 si los dos existen; 1 si falta alguno.
+ */
+int check_client_files(const std::filesystem::path& keys, const std::filesystem::path& delta);
+
+/*
+ * Carga delta y muestra su version e id.
+ *
+ * Parametros:
+ *   delta  archivo delta.txt
+ *   state  recibe delta
+ *
+ * Errores:
+ *   Deja pasar los errores de formato del archivo.
+ */
+void load_client_digest(const std::filesystem::path& delta, ClientState& state);
+
+/*
+ * Carga la clave publica y exige que su huella sea la que guarda delta (que
+ * ya debe estar en state).
+ *
+ * Parametros:
+ *   keys   carpeta con public_key.txt
+ *   state  tiene delta; recibe la clave publica
+ *
+ * Devuelve:
+ *   0 si la clave corresponde a delta; 1 si no.
+ */
+int load_client_key(const std::filesystem::path& keys, ClientState& state);
+
+/*
  * Muestra la consulta, carga delta, revisa que la consulta este soportada,
  * carga la clave publica y exige que su huella sea la de delta. Cada paso
  * imprime su resultado o el motivo de la falla.
@@ -98,6 +136,12 @@ int verify_and_report(const CommonOptions& opt, const ClientState& state, const 
  *   limit  numero maximo de filas que se muestran
  */
 void print_table(const query::ResultTable& table, std::size_t limit);
+
+/*
+ * Direccion del probador cuando no se indica --server: la variable
+ * TT_PROVER_ADDR o, si no existe, 127.0.0.1 con el puerto por omision.
+ */
+std::string default_prover_address();
 
 /*
  * Texto corto de un digest para los mensajes (16 digitos hexadecimales).

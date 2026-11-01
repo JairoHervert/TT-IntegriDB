@@ -7,7 +7,6 @@
 // como no confiables.
 
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -64,8 +63,7 @@ int parse_timeout(const std::string& text) {
  */
 QueryOptions parse_query_options(const std::vector<std::string>& args) {
     QueryOptions opt;
-    const char* env = std::getenv("TT_PROVER_ADDR");
-    std::string server = (env != nullptr && *env != '\0') ? env : "127.0.0.1:" + std::to_string(net::kDefaultPort);
+    std::string server = default_prover_address();
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (parse_common_option(args, i, opt.common)) continue;

@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "commands.hpp"
 #include "tt/cli/cli.hpp"
 #include "tt/crypto/hash.hpp"
+#include "tt/net/protocol.hpp"
 #include "tt/scheme/key_io.hpp"
 
 namespace tt::verifier {
@@ -65,6 +67,54 @@ query::ParsedQuery parse_query_words(const std::vector<std::string>& words) {
 }
 
 /*
+ * Implementacion: primero delta y despues la clave, con un mensaje que dice
+ * que opcion corregir.
+ */
+int check_client_files(const fs::path& keys, const fs::path& delta) {
+    if (!fs::exists(delta)) {
+        std::fprintf(stderr,
+                     "[verifier] no existe el digest %s: indica con --delta el delta.txt que publico el\n"
+                     "           propietario (por ejemplo --delta deploy/verifier/delta.txt).\n",
+                     delta.string().c_str());
+        return 1;
+    }
+    if (!fs::exists(keys / "public_key.txt")) {
+        std::fprintf(stderr,
+                     "[verifier] no hay clave publica en %s: indica con --keys la carpeta donde\n"
+                     "           esta public_key.txt (la misma que se uso en Setup).\n",
+                     keys.string().c_str());
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * Implementacion: carga e imprime version e id.
+ */
+void load_client_digest(const fs::path& delta, ClientState& state) {
+    state.digest = scheme::load_digest(delta);
+    std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", delta.string().c_str(),
+                static_cast<unsigned long long>(state.digest.state_version), short_id(state.digest.id()).c_str());
+}
+
+/*
+ * Implementacion: la huella de la clave debe ser la que guarda delta.
+ */
+int load_client_key(const fs::path& keys, ClientState& state) {
+    const auto start = Clock::now();
+    state.public_key = scheme::load_public_key(keys / "public_key.txt");
+    if (scheme::public_key_fingerprint(state.public_key) != state.digest.key_fingerprint) {
+        std::fprintf(stderr,
+                     "[verifier] la clave publica de %s no es la del digest delta: usa con --keys la\n"
+                     "           carpeta del mismo 'tt_owner init' con el que se ejecuto ese Setup.\n",
+                     keys.string().c_str());
+        return 1;
+    }
+    std::printf("[verifier] clave publica cargada y comprobada contra delta en %.2f s\n", seconds_since(start));
+    return 0;
+}
+
+/*
  * Implementacion: el mismo orden y los mismos mensajes que tenia el comando
  * verify antes de separar esta parte.
  */
@@ -72,24 +122,8 @@ int prepare_client(const CommonOptions& opt, ClientState& state) {
     const std::string label = opt.query.catalog_id.empty() ? "consulta" : "consulta " + opt.query.catalog_id;
     std::printf("[verifier] %s: %s\n", label.c_str(), query::to_sql(opt.query).c_str());
 
-    const fs::path pk_path = opt.keys / "public_key.txt";
-    if (!fs::exists(opt.delta)) {
-        std::fprintf(stderr,
-                     "[verifier] no existe el digest %s: indica con --delta el delta.txt que publico el\n"
-                     "           propietario (por ejemplo --delta deploy/verifier/delta.txt).\n",
-                     opt.delta.string().c_str());
-        return 1;
-    }
-    if (!fs::exists(pk_path)) {
-        std::fprintf(stderr,
-                     "[verifier] no hay clave publica en %s: indica con --keys la carpeta donde\n"
-                     "           esta public_key.txt (la misma que se uso en Setup).\n",
-                     opt.keys.string().c_str());
-        return 1;
-    }
-    state.digest = scheme::load_digest(opt.delta);
-    std::printf("[verifier] digest delta: %s (version %llu, id %s)\n", opt.delta.string().c_str(),
-                static_cast<unsigned long long>(state.digest.state_version), short_id(state.digest.id()).c_str());
+    if (const int code = check_client_files(opt.keys, opt.delta); code != 0) return code;
+    load_client_digest(opt.delta, state);
     try {
         for (const scheme::TreeSpec& tree : query::required_trees(opt.query, state.digest)) {
             std::printf("[verifier] se verifica con el AIT %s\n", tree.label().c_str());
@@ -101,18 +135,7 @@ int prepare_client(const CommonOptions& opt, ClientState& state) {
     if (opt.aso && query::query_kind(opt.query) != query::QueryKind::kSelection) {
         std::printf("[verifier] --aso solo cambia la verificacion de C1 a C6; en esta consulta el ASO ya es obligatorio\n");
     }
-
-    const auto start = Clock::now();
-    state.public_key = scheme::load_public_key(pk_path);
-    if (scheme::public_key_fingerprint(state.public_key) != state.digest.key_fingerprint) {
-        std::fprintf(stderr,
-                     "[verifier] la clave publica de %s no es la del digest delta: usa con --keys la\n"
-                     "           carpeta del mismo 'tt_owner init' con el que se ejecuto ese Setup.\n",
-                     opt.keys.string().c_str());
-        return 1;
-    }
-    std::printf("[verifier] clave publica cargada y comprobada contra delta en %.2f s\n", seconds_since(start));
-    return 0;
+    return load_client_key(opt.keys, state);
 }
 
 /*
@@ -178,6 +201,14 @@ void print_table(const query::ResultTable& table, std::size_t limit) {
     if (shown < table.rows.size()) {
         std::printf("  ... (%zu filas mas; usa --show N para ver mas)\n", table.rows.size() - shown);
     }
+}
+
+/*
+ * Implementacion: la variable vacia cuenta como no definida.
+ */
+std::string default_prover_address() {
+    const char* env = std::getenv("TT_PROVER_ADDR");
+    return (env != nullptr && *env != '\0') ? env : "127.0.0.1:" + std::to_string(net::kDefaultPort);
 }
 
 /*

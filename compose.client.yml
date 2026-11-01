@@ -1,0 +1,39 @@
+# TT 2026-B143 - lado cliente (computadora del usuario): verificador e
+# interfaz
+#
+# Es la parte confiable de la arquitectura: aqui se verifica cada respuesta
+# con delta y la clave publica, y la interfaz muestra el veredicto. El
+# probador y la base estan en la nube (compose.server.yml). Pasos completos
+# en docs/nube.md.
+#
+# En la computadora del cliente, desde la raiz del repositorio y con
+# deploy/verifier publicado por el propietario:
+#   export TT_PROVER_ADDR=<ip-de-la-nube>:7070      (PowerShell: $env:TT_PROVER_ADDR = "...")
+#   docker compose -f compose.client.yml up -d --build
+#   navegador: http://127.0.0.1:8080
+#
+# Sin Docker se obtiene lo mismo con:
+#   ./build/verifier/tt_verifier ui --server <ip-de-la-nube>:7070 \
+#       --keys deploy/verifier --delta deploy/verifier/delta.txt
+
+name: tt-integridb-client
+
+services:
+  verifier:
+    build:
+      context: .
+      target: verifier
+    image: tt-integridb/verifier
+    container_name: tt_verifier
+    restart: unless-stopped
+    environment:
+      # Direccion del probador en la nube. Sin valor: Compose la copia de la
+      # terminal (export TT_PROVER_ADDR=...). Si no se exporto, la interfaz
+      # busca el probador en 127.0.0.1:7070 y avisa que no responde.
+      TT_PROVER_ADDR:
+    volumes:
+      # delta y pk (lo publico del propietario para el cliente), solo lectura.
+      - ./deploy/verifier:/srv/tt/verifier:ro
+    ports:
+      # La interfaz solo se publica en 127.0.0.1 de esta computadora.
+      - "127.0.0.1:8080:8080"

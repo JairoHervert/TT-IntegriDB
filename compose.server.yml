@@ -1,0 +1,83 @@
+# TT 2026-B143 - lado servidor (nube): base de datos y probador
+#
+# Es la parte NO confiable de la arquitectura: el Servidor SQL y el modulo
+# probador. Se ejecuta en la maquina de la nube; el verificador y la
+# interfaz se quedan en la computadora del cliente (compose.client.yml).
+# Pasos completos en docs/nube.md.
+#
+# En la maquina de la nube, desde la raiz del repositorio y con
+# deploy/prover ya copiado desde la computadora del propietario:
+#   export TT_DB_PASS=app_pass_2026
+#   docker compose -f compose.server.yml up -d --build
+#   docker compose -f compose.server.yml ps      (esperar "healthy")
+#
+# Diferencias con docker-compose.yml (todo en una maquina):
+#   - No hay servicio verifier.
+#   - El probador publica 7070 en todas las interfaces, para que el
+#     verificador lo alcance por internet. El acceso se limita con el
+#     firewall del proveedor (solo las IP de ustedes), no con ufw: Docker
+#     abre sus puertos por fuera de ufw.
+#   - MySQL no publica ningun puerto: solo el probador lo ve, por la red
+#     interna "data". Para administrarlo: docker exec tt_db mysql ...
+
+name: tt-integridb
+
+services:
+  db:
+    image: mysql:8.4
+    container_name: tt_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_tt_2026
+      MYSQL_DATABASE: academic_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_pass_2026
+      TZ: America/Mexico_City
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - tt_db_data:/var/lib/mysql
+      # Se ejecuta una sola vez, en orden alfabetico, solo si el volumen esta
+      # vacio. Son los mismos datos con los que el propietario hizo Setup.
+      - ./academic_records_db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot_tt_2026"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  prover:
+    build:
+      context: .
+      target: prover
+    image: tt-integridb/prover
+    container_name: tt_prover
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TT_DB_HOST: db
+      TT_DB_PORT: "3306"
+      TT_DB_USER: app_user
+      TT_DB_NAME: academic_db
+      # Sin valor: Compose la copia de la terminal (export TT_DB_PASS=...).
+      TT_DB_PASS:
+    volumes:
+      # delta, D~ y pk que preparo 'tt_owner publish' en la computadora del
+      # propietario y se copiaron aqui (solo lectura).
+      - ./deploy/prover:/srv/tt/prover:ro
+    ports:
+      # Abierto hacia afuera: el verificador llega por internet.
+      - "7070:7070"
+    networks:
+      - data
+
+networks:
+  data:
+
+volumes:
+  tt_db_data:

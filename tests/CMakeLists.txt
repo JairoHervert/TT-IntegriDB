@@ -31,6 +31,10 @@ tt_add_test(sum_join_c14_test)
 tt_add_test(service_test)
 tt_add_test(net_test)
 target_link_libraries(net_test PRIVATE tt_net)
+tt_add_test(ui_test)
+target_link_libraries(ui_test PRIVATE tt_ui tt_net)
+# La prueba usa el cliente HTTP de cpp-httplib para hablar con la interfaz.
+target_include_directories(ui_test SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/cpp-httplib)
 tt_add_test(mysql_source_test)
 target_link_libraries(mysql_source_test PRIVATE tt_mysql)
 
@@ -82,3 +86,9 @@ set_tests_properties(verifier_ping_without_server_exit PROPERTIES WILL_FAIL TRUE
 add_test(NAME owner_publish_requires_state
          COMMAND tt_owner publish --state ${CMAKE_CURRENT_BINARY_DIR}/no_state --out ${CMAKE_CURRENT_BINARY_DIR}/no_deploy)
 set_tests_properties(owner_publish_requires_state PROPERTIES PASS_REGULAR_EXPRESSION "falta")
+# La interfaz necesita delta y la clave publica; sin ellos termina con un
+# mensaje claro y codigo 1, antes de abrir el puerto.
+add_test(NAME verifier_ui_requires_delta COMMAND tt_verifier ui --delta ${CMAKE_CURRENT_BINARY_DIR}/no_delta.txt)
+set_tests_properties(verifier_ui_requires_delta PROPERTIES PASS_REGULAR_EXPRESSION "no existe el digest")
+add_test(NAME verifier_ui_requires_delta_exit COMMAND tt_verifier ui --delta ${CMAKE_CURRENT_BINARY_DIR}/no_delta.txt)
+set_tests_properties(verifier_ui_requires_delta_exit PROPERTIES WILL_FAIL TRUE)

@@ -1,17 +1,29 @@
 # TT 2026-B143 - servicios
 #
-# Por ahora solo existe el servicio "db": el "Servidor SQL" (no confiable)
-# de la arquitectura del reporte, cargado con el caso de estudio de
-# registros academicos. Los servicios "prover" y "verifier" se agregaran
-# aqui cuando exista su codigo y su Dockerfile (carpetas prover/ y
-# verifier/); desde la red interna de Docker se conectaran a este
-# servicio por su nombre, "db".
+# Los tres bloques de la arquitectura, cada uno en su contenedor:
+#   db        Servidor SQL (no confiable): MySQL con el caso de estudio.
+#   prover    bloque Servidor: tt_prover serve con delta, D~ y pk.
+#   verifier  bloque Cliente: tt_verifier ui (interfaz + verificador) con
+#             delta y pk.
+# El Propietario de datos (tt_owner init/setup/publish) se ejecuta fuera de
+# Docker, en la VM: es quien tiene la clave secreta y no debe compartir
+# maquina logica con el servidor. publish deja en deploy/ lo que monta cada
+# contenedor (ver docs/contenedores.md).
 #
-# Levantar:   docker compose up -d
-# Estado:     docker compose ps        (esperar "healthy")
-# Logs:       docker compose logs -f db
-# Reiniciar desde cero (borra datos y vuelve a ejecutar academic_records_db/init/):
-#             docker compose down -v && docker compose up -d
+# Redes: db y prover comparten "data"; prover y verifier comparten
+# "clients". El verificador no tiene ruta hacia MySQL: solo puede hablar con
+# el probador, como en la arquitectura.
+#
+# Levantar todo (desde la raiz del repositorio, con deploy/ ya publicado):
+#   export TT_DB_PASS=app_pass_2026
+#   docker compose up -d --build
+#   docker compose ps                 (esperar "healthy" en los tres)
+#   navegador: http://127.0.0.1:8080
+# Logs:       docker compose logs -f prover verifier
+# Solo la base (como antes):  docker compose up -d db
+# Reiniciar la base desde cero (borra datos y vuelve a ejecutar
+# academic_records_db/init/):
+#             docker compose down -v && docker compose up -d db
 #
 # "name" fija el nombre del proyecto de Compose (prefijo de volumen/red),
 # para que NO dependa de como se llame la carpeta local (TT_Code, la que
@@ -35,18 +47,75 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
     ports:
-      # Acceso desde la VM mientras prover/verifier corren fuera de Docker.
-      # Cuando sean contenedores en este archivo, usaran el host "db".
+      # Acceso desde la VM para tt_owner setup (y para los programas
+      # cuando se ejecutan fuera de Docker).
       - "127.0.0.1:3306:3306"
     volumes:
       - tt_db_data:/var/lib/mysql
       # Se ejecuta una sola vez, en orden alfabetico, solo si el volumen esta vacio.
       - ./academic_records_db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - data
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot_tt_2026"]
       interval: 5s
       timeout: 3s
       retries: 20
+
+  prover:
+    build:
+      context: .
+      target: prover
+    image: tt-integridb/prover
+    container_name: tt_prover
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TT_DB_HOST: db
+      TT_DB_PORT: "3306"
+      TT_DB_USER: app_user
+      TT_DB_NAME: academic_db
+      # Sin valor: Compose la copia de la terminal (export TT_DB_PASS=...),
+      # asi la contrasena no se escribe en este archivo para el probador. Si
+      # no se exporto, el probador no arranca y su log dice que falta.
+      TT_DB_PASS:
+    volumes:
+      # delta, D~ y pk que preparo 'tt_owner publish' (solo lectura).
+      - ./deploy/prover:/srv/tt/prover:ro
+    ports:
+      # Para usar tt_verifier query/ping desde la VM.
+      - "127.0.0.1:7070:7070"
+    networks:
+      - data
+      - clients
+
+  verifier:
+    build:
+      context: .
+      target: verifier
+    image: tt-integridb/verifier
+    container_name: tt_verifier
+    restart: unless-stopped
+    depends_on:
+      prover:
+        condition: service_healthy
+    environment:
+      TT_PROVER_ADDR: prover:7070
+    volumes:
+      # delta y pk (lo publico del propietario para el cliente), solo lectura.
+      - ./deploy/verifier:/srv/tt/verifier:ro
+    ports:
+      # La interfaz solo se publica en 127.0.0.1 de la VM: el veredicto
+      # viaja sin proteccion hasta el navegador (docs/interfaz.md).
+      - "127.0.0.1:8080:8080"
+    networks:
+      - clients
+
+networks:
+  data:
+  clients:
 
 volumes:
   tt_db_data:

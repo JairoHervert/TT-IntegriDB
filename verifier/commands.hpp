@@ -34,6 +34,11 @@ std::string query_usage();
 std::string ping_usage();
 
 /*
+ * Texto de ayuda del comando ui.
+ */
+std::string ui_usage();
+
+/*
  * Comando verify: Verify de una respuesta guardada en un archivo, para
  * cualquier consulta del catalogo. La revisa contra delta y la clave
  * publica, y muestra el resultado verificado.
@@ -86,5 +91,24 @@ int run_query(const std::vector<std::string>& args);
  *   Lanza cli::UsageError si las opciones no son validas.
  */
 int run_ping(const std::vector<std::string>& args);
+
+/*
+ * Comando ui: interfaz del caso de estudio en el navegador. Atiende la
+ * pagina hasta recibir SIGINT o SIGTERM; cada consulta se verifica igual que
+ * en el comando query.
+ *
+ * Parametros:
+ *   args  argumentos que siguen a la palabra "ui"
+ *
+ * Devuelve:
+ *   0 al detenerse con una senal; 1 si falta delta o la clave publica, o si
+ *   la clave no corresponde a delta.
+ *
+ * Errores:
+ *   Lanza cli::UsageError si las opciones no son validas; deja pasar los
+ *   errores al abrir el puerto o la carpeta de la pagina (main los convierte
+ *   en mensaje y codigo 1).
+ */
+int run_ui(const std::vector<std::string>& args);
 
 }  // namespace tt::verifier

@@ -4,7 +4,11 @@
 
 ```
 CMakeLists.txt            construcción de todo el código C++
-docker-compose.yml        orquesta los servicios (por ahora solo "db")
+docker-compose.yml        orquesta los servicios: db, prover y verifier
+compose.server.yml        lado servidor para la nube: db y prover
+compose.client.yml        lado cliente: verifier con la interfaz
+Dockerfile                imágenes del probador y del verificador
+.dockerignore             lo que no entra a las imágenes (claves, estado)
 academic_records_db/      base de datos del caso de estudio (Servidor SQL)
   init/01_schema.sql        esquema: program, student, course, academic_record
   init/02_seed_data.sql     datos sintéticos: 500 alumnos (~15,200 registros)
@@ -28,15 +32,20 @@ cli/                      utilidades de línea de comandos de los tres programas
 mysql/                    adaptador de MySQL (libmysqlclient): lectura de la
                           base para Setup y de filas para el probador
 net/                      comunicación por red probador ↔ verificador (HTTP)
+ui/                       interfaz del caso de estudio: servidor local
+                          (tt_ui) y la página en ui/web
 third_party/cpp-httplib/  biblioteca HTTP de un archivo (copia fija, MIT)
 owner/                    Propietario de datos: init, setup, publish y catalog
 prover/                   módulo probador (bloque Servidor): serve y answer
 verifier/                 Cliente SQL + módulo verificador (bloque Cliente):
-                          query, verify y ping
+                          query, verify, ping y ui
 tests/                    pruebas del núcleo, de la red y del adaptador
 docs/setup.md             decisiones de Setup y su justificación
 docs/consultas.md         decisiones de ProofGen/Verify (C1–C6) y su justificación
 docs/red.md               separación de los módulos y comunicación por red
+docs/interfaz.md          interfaz del caso de estudio y sus decisiones
+docs/contenedores.md      empaquetado en contenedores y sus decisiones
+docs/nube.md              despliegue: base y probador en la nube, cliente local
 ```
 
 Los datos incluyen 5 carreras (ISC, IIA, LCD, ITI, ICS), cada una con su
@@ -55,7 +64,9 @@ MySQL está en `mysql/` y las pruebas usan uno en memoria. La red es otro
 adaptador (`net/`): el núcleo recibe y entrega bytes, y los dos programas
 usan los mismos servicios `query::answer_query` (probador) y
 `query::verify_query` (verificador), sea que la respuesta viaje por la red
-o en un archivo. Así cada función del esquema
+o en un archivo. La interfaz del caso de estudio (`ui/`) es otro adaptador
+del verificador: llama al mismo `verify_query` y la página solo muestra el
+veredicto. Así cada función del esquema
 (Init, Setup, ProofGen, Verify) se puede probar por separado (RNF02) y los
 tres actores quedan separados (RNF01).
 
@@ -186,6 +197,46 @@ verifica:
 - El protocolo, las decisiones y cómo probarlo desde otra máquina están en
   `docs/red.md`.
 
+## Interfaz del caso de estudio
+
+Con el probador corriendo (sección anterior), en otra terminal:
+
+```bash
+./build/verifier/tt_verifier ui --keys deploy/verifier --delta deploy/verifier/delta.txt
+```
+
+y en el navegador de la VM se abre `http://127.0.0.1:8080`. Tiene dos
+vistas:
+
+- **Expediente del alumno:** con una boleta arma la ficha, los indicadores
+  y el historial. Cada parte es una consulta distinta que se verifica por
+  separado.
+- **Catálogo de consultas:** las 14 consultas con sus parámetros.
+
+La página no verifica nada: lo hace `tt_verifier` con δ y la clave
+pública, y la página solo muestra el veredicto. Detalles y decisiones en
+`docs/interfaz.md`.
+
+## Todo en contenedores
+
+La base, el probador y el verificador con la interfaz también pueden correr
+cada uno en su contenedor. Con `deploy/` ya publicado:
+
+```bash
+export TT_DB_PASS=app_pass_2026
+docker compose up -d --build
+docker compose ps                  # esperar "healthy" en los tres
+```
+
+y la interfaz queda en `http://127.0.0.1:8080`. El verificador está en otra
+red que la base y no puede alcanzarla; solo habla con el probador. Detalles
+y decisiones en `docs/contenedores.md`.
+
+Para separar las máquinas, con la base y el probador en la nube y el
+verificador con la interfaz en la computadora del cliente, se usan
+`compose.server.yml` y `compose.client.yml`. Los pasos están en
+`docs/nube.md`.
+
 ## Responder y verificar consultas con archivos
 
 Sin red, con el estado de Setup (`setup/`) y las claves (`keys/`):
@@ -249,7 +300,7 @@ compartida de VirtualBox: Docker no puede leer `init/` desde ahí) y corre:
 
 ```bash
 chmod -R a+rX academic_records_db
-docker compose up -d
+docker compose up -d db
 docker compose ps
 ```
 
@@ -281,7 +332,7 @@ Por defecto son 500 alumnos. Para usar 1000 (o 2000 con `--size large`):
 
 ```bash
 python3 academic_records_db/tools/generate_synthetic_data.py --size medium --data-only --output academic_records_db/init/02_seed_data.sql
-docker compose down -v && docker compose up -d
+docker compose down -v && docker compose up -d db
 ```
 
 ## C7: rango multidimensional con interseccion ASO (octubre 2026)

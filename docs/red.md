@@ -97,13 +97,13 @@ entregó respuesta** (sin conexión, tiempo agotado o error del servidor).
 - **Ventajas prácticas:**
   - Se puede probar con `curl`.
   - El `healthcheck` de Docker es una petición a `/v1/health`.
-  - La interfaz del caso de estudio (siguiente paso) podrá hablar HTTP con
-    el verificador usando la misma biblioteca.
+  - La interfaz del caso de estudio habla HTTP con el verificador usando
+    la misma biblioteca (ver `docs/interfaz.md`).
 - **cpp-httplib** es un solo archivo de cabecera con licencia MIT. Se copió
   en `third_party/cpp-httplib/` con versión y SHA-256 fijados, para que la
   VM y los contenedores compilen exactamente lo mismo sin descargar nada.
-  Solo se incluye en los `.cpp` de `net/`; ningún encabezado público la
-  expone.
+  Solo se incluye en los `.cpp` de `net/` y `ui/` (y en sus pruebas);
+  ningún encabezado público la expone.
 
 ### 2. El canal no forma parte de la base de confianza
 
@@ -131,7 +131,7 @@ el rechazo ya estaba cubierto por los Verify de cada tipo.
 Antes, el comando que escribía archivos y un futuro servidor habrían
 repetido la misma cadena de casos, y cualquier diferencia entre ellos sería
 un error difícil de ver. Con `answer_query` y `verify_query`, la red, los
-archivos y la futura interfaz usan una sola implementación. El verificador
+archivos y la interfaz usan una sola implementación. El verificador
 también decodifica según la consulta que hizo: si el servidor manda una
 respuesta de otro tipo (por ejemplo, la de C13 cuando se pidió C7), el
 lector la rechaza.
@@ -267,14 +267,10 @@ pequeña; los de la VM se medirán para el capítulo 8):
 
 ## Lo que sigue
 
-1. **Contenedores:**
-   - Un `Dockerfile` para el probador y otro para el verificador.
-   - En `docker-compose.yml`:
-     - El probador monta `deploy/prover` y usa `TT_DB_HOST=db`.
-     - El verificador monta `deploy/verifier` y usa
-       `TT_PROVER_ADDR=prover:7070`.
-     - El `healthcheck` del probador es `GET /v1/health`.
-2. **Interfaz del caso de estudio:** `verify_query` ya entrega el resultado
-   como tabla, lista para convertirse en JSON. La interfaz hablará con el
-   verificador (bloque Cliente), nunca directamente con el probador, para
-   que todo lo que muestre esté verificado.
+1. **Contenedores:** hechos. El probador y el verificador tienen su imagen y
+   se levantan con la base usando `docker compose up -d --build`. Ver
+   `docs/contenedores.md`.
+2. **Interfaz del caso de estudio:** hecha con `tt_verifier ui`. La página
+   habla con el verificador (bloque Cliente), nunca directamente con el
+   probador, para que todo lo que muestre esté verificado. Ver
+   `docs/interfaz.md`.

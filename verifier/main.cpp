@@ -4,13 +4,14 @@
 // probador, recibir (R, pi) y evaluar Verify(delta, Q, R, pi) con la clave
 // publica pk. Entrega R al Cliente SQL junto con el veredicto.
 //
-// La respuesta del probador llega por la red (query) o desde un archivo
-// (verify); en los dos casos la revisa query::verify_query.
+// La respuesta del probador llega por la red (query y ui) o desde un
+// archivo (verify); en todos los casos la revisa query::verify_query.
 //
 // Comandos (cada uno en su archivo):
 //   tt_verifier query    query_command.cpp    consulta por la red y verifica
 //   tt_verifier verify   verify_command.cpp   verifica una respuesta guardada
 //   tt_verifier ping     ping_command.cpp     conexion y estado del probador
+//   tt_verifier ui       ui_command.cpp       interfaz del caso de estudio
 
 #include <cstdio>
 #include <exception>
@@ -26,8 +27,9 @@ namespace {
  * Imprime la ayuda general en el flujo dado.
  */
 void print_usage(std::FILE* out) {
-    std::fprintf(out, "Uso:\n%s\n%s\n%s", tt::verifier::query_usage().c_str(), tt::verifier::verify_usage().c_str(),
-                 tt::verifier::ping_usage().c_str());
+    std::fprintf(out, "Uso:\n%s\n%s\n%s\n%s", tt::verifier::query_usage().c_str(),
+                 tt::verifier::verify_usage().c_str(), tt::verifier::ping_usage().c_str(),
+                 tt::verifier::ui_usage().c_str());
 }
 
 }  // namespace
@@ -54,6 +56,7 @@ int main(int argc, char** argv) {
         if (args[0] == "query") return tt::verifier::run_query(rest);
         if (args[0] == "verify") return tt::verifier::run_verify(rest);
         if (args[0] == "ping") return tt::verifier::run_ping(rest);
+        if (args[0] == "ui") return tt::verifier::run_ui(rest);
         throw tt::cli::UsageError("comando desconocido: " + args[0]);
     } catch (const tt::cli::UsageError& e) {
         std::fflush(stdout);

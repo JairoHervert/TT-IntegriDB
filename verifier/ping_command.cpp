@@ -8,7 +8,6 @@
 // verifica por completo.
 
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -43,8 +42,7 @@ struct PingOptions {
  */
 PingOptions parse_ping_options(const std::vector<std::string>& args) {
     PingOptions opt;
-    const char* env = std::getenv("TT_PROVER_ADDR");
-    std::string server = (env != nullptr && *env != '\0') ? env : "127.0.0.1:" + std::to_string(net::kDefaultPort);
+    std::string server = default_prover_address();
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (arg == "--server") {
