@@ -37,6 +37,18 @@
   </header>
 
   <main>
+    <!-- Las mediciones pertenecen a esta sesion del navegador, no a la base. -->
+    <section class="measurements-toolbar" aria-label="Registro de mediciones">
+      <div>
+        <strong>Mediciones de esta sesión</strong>
+        <p id="measurements-count" role="status" aria-live="polite">0 consultas registradas</p>
+      </div>
+      <div class="measurements-actions">
+        <button type="button" id="measurements-export" disabled>Exportar CSV</button>
+        <button type="button" id="measurements-clear" disabled>Limpiar registro</button>
+      </div>
+    </section>
+
     <!-- Vista 1: expediente de un alumno armado con consultas verificadas -->
     <section class="view" id="view-record" aria-labelledby="tab-record">
       <form class="lookup" id="record-form" autocomplete="off">
@@ -109,7 +121,7 @@
       </div>
     </section>
 
-    <!-- Vista 2: cualquier consulta del catalogo -->
+    <!-- Vista 2: cada consulta puede medirse con y sin criptografia. -->
     <section class="view" id="view-catalog" aria-labelledby="tab-catalog" hidden>
       <div class="catalog-layout">
         <nav class="catalog-list" id="catalog-list" aria-label="Consultas del catálogo"></nav>
@@ -127,8 +139,38 @@
               <p class="trees" id="query-trees"></p>
             </div>
             <p class="query-note" id="query-note"></p>
-            <button type="submit" class="primary" id="query-submit">Consultar y verificar</button>
+            <div class="query-actions">
+              <button type="submit" class="primary" id="query-submit">Consultar y verificar</button>
+              <button type="button" id="query-direct" disabled>SQL directo (sin verificar)</button>
+            </div>
+            <p class="direct-note">Comparacion experimental: SQL directo no proporciona prueba de integridad.
+              Disponible solo con <code>TT_ENABLE_DIRECT_BENCH=1</code>.</p>
           </form>
+
+          <!-- Series de comparacion pareada; solo se usan consultas del catalogo. -->
+          <section class="sheet benchmark" aria-labelledby="benchmark-title">
+            <h3 id="benchmark-title">Experimento de rendimiento</h3>
+            <p class="hint">Compara pares de consultas en orden alternado, con la misma entrada.
+              Los calentamientos no entran en los estadísticos. Se verifica el estado de ambos servicios antes de iniciar y se guarda en el CSV. Mantén visible esta pestaña.</p>
+            <div class="benchmark-fields">
+              <label>Entorno / escala
+                <input type="text" id="benchmark-environment" maxlength="80" placeholder="VM local | 500 alumnos | q=..." required
+                  aria-label="Entorno y escala de datos">
+              </label>
+              <label>Calentamientos
+                <input type="number" id="benchmark-warmups" min="0" max="10" step="1" value="5">
+              </label>
+              <label>Pares de medición
+                <input type="number" id="benchmark-repetitions" min="1" max="100" step="1" value="30">
+              </label>
+            </div>
+            <div class="benchmark-actions">
+              <button type="button" class="primary" id="benchmark-run">Iniciar comparación</button>
+              <button type="button" id="benchmark-stop" disabled>Detener tras este par</button>
+            </div>
+            <p id="benchmark-progress" role="status" aria-live="polite">Selecciona la consulta y ejecuta los dos modos automáticamente.</p>
+            <div id="benchmark-summary" aria-live="polite"></div>
+          </section>
 
           <section class="sheet result" id="query-result" hidden aria-live="polite">
             <div class="verdict" id="result-verdict"></div>

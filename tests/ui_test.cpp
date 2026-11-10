@@ -49,11 +49,13 @@ public:
     /*
      * Abre un puerto libre en 127.0.0.1 y empieza a atender en otro hilo.
      */
-    RunningProver(query::ProverContext context, net::RequestLogger logger = {}) {
+    RunningProver(query::ProverContext context, net::RequestLogger logger = {},
+                  bool allow_direct = false, net::DirectRunner direct = {}) {
         net::ServerOptions options;
+        options.direct_benchmark = allow_direct;
         options.host = "127.0.0.1";
         options.port = 0;
-        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger));
+        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct));
         port_ = server_->bind();
         thread_ = std::thread([this] { server_->run(); });
         server_->wait_until_ready();
@@ -226,6 +228,45 @@ int main() {
     check(!records.empty() && records.back().outcome == "verified" && records.back().bytes > 0,
           "la bitacora recibe cada consulta con su tamano");
 
+    section("Comparacion SQL directa claramente no verificada");
+    {
+        check(portal.direct("C2 1").status == 403 &&
+                  has(portal.status().body, "\"direct_benchmark_enabled\":false"),
+              "SQL directo bloqueado de forma predeterminada");
+        net::DirectRunner fake = [](const query::ParsedQuery&) {
+            net::DirectReply reply;
+            reply.json = "{\"outcome\":\"direct\",\"unverified\":true,\"result\":{\"columns\":[\"x\"],\"row_count\":1,\"truncated\":false,\"rows\":[[6]]}}";
+            reply.rows = 1;
+            reply.sql_seconds = 0.001;
+            reply.encoding_seconds = 0.0001;
+            return reply;
+        };
+        RunningProver benchmark(fx.context(), {}, true, fake);
+        ui::PortalOptions options = portal_options(benchmark.endpoint());
+        options.direct_benchmark = true;
+        ui::Portal p(fx.state.digest, fx.keys.pk.aso, options);
+        const ui::ApiReply direct = p.direct("C2 1");
+        check(direct.status == 200 && has(direct.body, "\"unverified\":true") &&
+                  !has(direct.body, "\"outcome\":\"verified\"") && !direct.headers.empty(),
+              "la modalidad directa devuelve filas SIN sello ni Verify y expone sus tiempos");
+        check(p.direct("C99 1").status == 400 && p.direct("range academic_record grade 6 8").status == 422,
+              "consulta directa invalida o fuera de catalogo se rechaza");
+    }
+
+    section("Metricas de la consulta en el Portal");
+    {
+        const ui::ApiReply r = portal.query("C14 1");
+        check(has(r.body, "\"outcome\":\"verified\"") && has(r.body, "\"timings\":{") &&
+                  has(r.body, "\"generation_seconds\":") && has(r.body, "\"encoding_seconds\":") &&
+                  has(r.body, "\"queue_seconds\":") && has(r.body, "\"handler_seconds\":") &&
+                  has(r.body, "\"network_overhead_seconds\":") && has(r.body, "\"client_total_seconds\":") &&
+                  has(r.body, "\"verification\":{") && has(r.body, "\"result\":"),
+              "el Portal conserva el resultado verificado y muestra las etapas de tiempo");
+        check(records.back().query == "C14 1" && records.back().prover_seconds >= 0 &&
+                  records.back().verify_seconds >= 0,
+              "la bitacora conserva sus campos anteriores");
+    }
+
     section("Consultas que no se envian al probador");
     {
         const int before = prover_requests.load();
@@ -245,8 +286,9 @@ int main() {
         ui::Portal p(fx.state.digest, fx.keys.pk.aso, portal_options(stale.endpoint()));
         check(has(p.status().body, "\"matches\":false"), "/api/status avisa que el estado no coincide");
         const ui::ApiReply r = p.query("C4 6 8");
-        check(r.status == 200 && has(r.body, "\"outcome\":\"rejected\"") && !has(r.body, "\"result\""),
-              "la respuesta se rechaza y no lleva filas");
+        check(r.status == 200 && has(r.body, "\"outcome\":\"rejected\"") && !has(r.body, "\"result\"") &&
+                  has(r.body, "\"timings\":{") && has(r.body, "\"client_total_seconds\":"),
+              "la respuesta se rechaza sin filas aunque existan metricas no autenticadas");
     }
 
     section("Probador sin clave publica o detenido");
@@ -256,13 +298,15 @@ int main() {
         RunningProver partial(no_pk);
         ui::Portal p(fx.state.digest, fx.keys.pk.aso, portal_options(partial.endpoint()));
         const ui::ApiReply c7 = p.query("C7 6 8 20241 20242");
-        check(has(c7.body, "\"outcome\":\"no_answer\"") && has(c7.body, "\"status\":500"),
-              "C7 sin clave en el probador: sin respuesta (500)");
+        check(has(c7.body, "\"outcome\":\"no_answer\"") && has(c7.body, "\"status\":500") &&
+                  has(c7.body, "\"timings\":null") && !has(c7.body, "\"result\""),
+              "C7 sin clave: no inventa metricas del servidor ni devuelve filas");
         check(has(p.query("C2 1").body, "\"outcome\":\"verified\""), "C2 se sigue verificando");
         partial.stop();
         const ui::ApiReply down = p.query("C2 1");
-        check(has(down.body, "\"outcome\":\"no_answer\"") && has(down.body, "\"status\":0"),
-              "probador detenido: sin respuesta");
+        check(has(down.body, "\"outcome\":\"no_answer\"") && has(down.body, "\"status\":0") &&
+                  has(down.body, "\"timings\":null") && has(down.body, "\"network_overhead_seconds\":null"),
+              "probador detenido: sin respuesta ni metricas remotas");
         check(has(p.status().body, "\"reachable\":false"), "/api/status indica que no responde");
     }
 
@@ -300,8 +344,14 @@ int main() {
 
         auto no_header = client.Post("/api/query", "C2 1", "text/plain");
         check(no_header && no_header->status == 403, "POST sin X-TT-UI: 403");
+        auto no_header_direct = client.Post("/api/direct", "C2 1", "text/plain");
+        check(no_header_direct && no_header_direct->status == 403,
+              "SQL directo tambien exige X-TT-UI");
 
         const httplib::Headers ui_header = {{ui::kUiHeader, "1"}};
+        auto direct_disabled = client.Post("/api/direct", ui_header, "C2 1", "text/plain");
+        check(direct_disabled && direct_disabled->status == 403,
+              "SQL directo no se ejecuta sin habilitar el modo experimental");
         auto query = client.Post("/api/query", ui_header, "C2 1", "text/plain");
         check(query && query->status == 200 && has(query->body, "\"outcome\":\"verified\"") &&
                   has(query->get_header_value("Content-Type"), "application/json"),

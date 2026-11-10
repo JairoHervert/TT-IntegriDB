@@ -2,8 +2,11 @@
 
 #include "tt/ui/portal.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
+#include <iomanip>
+#include <sstream>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -26,6 +29,15 @@ using Clock = std::chrono::steady_clock;
  */
 double seconds_since(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+/*
+ * Duracion decimal para las cabeceras informativas de la API local.
+ */
+std::string seconds_text(double seconds) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(9) << seconds;
+    return out.str();
 }
 
 /*
@@ -109,7 +121,7 @@ ApiReply not_sent(const Prepared& p) {
     w.key("outcome").value(p.outcome);
     w.key("message").value(p.message);
     w.end_object();
-    return {p.status, w.str()};
+    return {p.status, w.str(), {}};
 }
 
 /*
@@ -173,6 +185,7 @@ ApiReply Portal::status() const {
     w.begin_object();
     w.key("client").begin_object();
     w.key("state_id").value(state_id_);
+    w.key("direct_benchmark_enabled").value(options_.direct_benchmark);
     w.key("state_version").value(static_cast<std::uint64_t>(digest_.state_version));
     w.key("plan").value(digest_.plan);
     w.key("tables").begin_array();
@@ -218,7 +231,7 @@ ApiReply Portal::status() const {
     }
     w.end_object();
     w.end_object();
-    return {200, w.str()};
+    return {200, w.str(), {}};
 }
 
 /*
@@ -233,13 +246,14 @@ ApiReply Portal::preview(const std::string& text) const {
     w.key("outcome").value("ready");
     w.key("message").value("");
     w.end_object();
-    return {200, w.str()};
+    return {200, w.str(), {}};
 }
 
 /*
- * Implementacion: prepare(), fetch_answer() sin bloqueo (el probador ya
- * atiende de una en una) y verify_query() con el candado, porque es la parte
- * que usa el estado de NTL de este proceso.
+ * Implementacion: prepare(), fetch_answer_measured() sin bloqueo (el
+ * probador ya atiende de una en una) y verify_query() con el candado, porque
+ * es la parte que usa el estado de NTL de este proceso. Los tiempos enviados
+ * por HTTP se exponen como informacion; Verify solo recibe bytes TTRSP.
  */
 ApiReply Portal::query(const std::string& text) {
     const Prepared p = prepare(text, digest_);
@@ -261,11 +275,11 @@ ApiReply Portal::query(const std::string& text) {
     w.end_object();
 
     const Clock::time_point start = Clock::now();
-    std::vector<unsigned char> bytes;
+    net::MeasuredAnswer answer;
     int prover_status = 200;
     std::string failure;
     try {
-        bytes = net::fetch_answer(options_.prover, p.text, options_.query);
+        answer = net::fetch_answer_measured(options_.prover, p.text, options_.query);
     } catch (const net::ServerError& e) {
         prover_status = e.status();
         failure = "el probador respondio con error (" + std::to_string(e.status()) + "): " + e.what();
@@ -273,14 +287,56 @@ ApiReply Portal::query(const std::string& text) {
         prover_status = 0;
         failure = e.what();
     }
-    record.prover_seconds = seconds_since(start);
-    record.bytes = bytes.size();
+    // Ante un error conservamos la duracion observada, pero no inventamos
+    // tiempos de servidor: nunca llego una respuesta HTTP 200 con metricas.
+    record.prover_seconds = failure.empty() ? answer.roundtrip_seconds : seconds_since(start);
+    record.bytes = answer.bytes.size();
 
     w.key("prover").begin_object();
     w.key("address").value(options_.prover.text());
     w.key("status").value(prover_status);
-    w.key("seconds").value(record.prover_seconds);
-    w.key("bytes").value(static_cast<std::uint64_t>(bytes.size()));
+    w.key("seconds").value(record.prover_seconds);  // campo anterior: ida y vuelta HTTP
+    w.key("bytes").value(static_cast<std::uint64_t>(record.bytes));
+    w.key("timings");
+    if (answer.server_timings) {
+        // Los tiempos declarados por el probador son informativos y NO
+        // intervienen en la aceptacion criptografica de la respuesta.
+        const net::ServerTimings& t = *answer.server_timings;
+        w.begin_object();
+        w.key("generation_seconds").value(t.generation_seconds);
+        w.key("encoding_seconds").value(t.encoding_seconds);
+        w.key("queue_seconds").value(t.queue_seconds);
+        w.key("handler_seconds").value(t.handler_seconds);
+        w.key("row_fetch_seconds");
+        if (t.row_fetch_seconds) w.value(*t.row_fetch_seconds);
+        else w.null();
+        // Las etapas no se completan con cero cuando el servidor antiguo
+        // no las publica: desconocido no es lo mismo que tiempo nulo.
+        w.key("stages");
+        if (t.ait_seconds && t.merkle_seconds && t.aso_seconds) {
+            const double known = *t.ait_seconds + *t.merkle_seconds + *t.aso_seconds +
+                                 t.row_fetch_seconds.value_or(0);
+            w.begin_object();
+            w.key("ait_seconds").value(*t.ait_seconds);
+            w.key("merkle_seconds").value(*t.merkle_seconds);
+            w.key("aso_seconds").value(*t.aso_seconds);
+            w.key("other_seconds").value(std::max(0.0, t.generation_seconds - known));
+            w.end_object();
+        } else {
+            w.null();
+        }
+        w.end_object();
+    } else {
+        w.null();  // servidor anterior o cabeceras ausentes/invalidas
+    }
+    w.key("network_overhead_seconds");
+    if (answer.server_timings && record.prover_seconds >= answer.server_timings->handler_seconds) {
+        // Diferencia aproximada: incluye HTTP, planificacion y transporte;
+        // no representa por si sola la latencia fisica de la red.
+        w.value(record.prover_seconds - answer.server_timings->handler_seconds);
+    } else {
+        w.null();  // medicion no comparable o tiempos no disponibles
+    }
     w.end_object();
 
     if (!failure.empty()) {
@@ -290,16 +346,19 @@ ApiReply Portal::query(const std::string& text) {
         record.outcome = "no_answer";
         record.note = failure;
         if (logger_) logger_(record);
-        return {200, w.str()};
+        return {200, w.str(), {}};
     }
 
     query::VerifierOutcome outcome;
     {
         std::lock_guard<std::mutex> lock(verify_mutex_);
         crypto::init_pairing_group();  // fija el modulo de NTL en este hilo
-        outcome = query::verify_query(digest_, public_key_, *p.parsed, bytes);
+        outcome = query::verify_query(digest_, public_key_, *p.parsed, answer.bytes);
     }
     record.verify_seconds = outcome.seconds;
+    // Tiempo del flujo del verificador: desde el envio al probador hasta
+    // obtener el veredicto. Incluye espera del mutex, pero no JSON/HTML.
+    w.key("client_total_seconds").value(seconds_since(start));
 
     w.key("verification").begin_object();
     w.key("seconds").value(outcome.seconds);
@@ -328,7 +387,59 @@ ApiReply Portal::query(const std::string& text) {
     }
     w.end_object();
     if (logger_) logger_(record);
-    return {200, w.str()};
+    return {200, w.str(), {}};
+}
+
+
+/*
+ * Implementacion: solo se envia una consulta tipada del catalogo. La ruta
+ * SQL directa no ejecuta Verify ni tiene acceso a MySQL en el cliente.
+ * Los tiempos del servidor son informativos, como en la ruta autenticada.
+ */
+ApiReply Portal::direct(const std::string& text) {
+    if (!options_.direct_benchmark) {
+        return {403, "{\"outcome\":\"error\",\"message\":\"SQL directo deshabilitado; activa TT_ENABLE_DIRECT_BENCH=1\"}", {}};
+    }
+    const Prepared p = prepare(text, digest_);
+    if (p.status != 200) return not_sent(p);
+    if (p.parsed->catalog_id.empty()) {
+        return {422, "{\"outcome\":\"unsupported\",\"message\":\"la referencia directa solo acepta C1 a C14\"}", {}};
+    }
+
+    const auto start = Clock::now();
+    try {
+        const net::MeasuredDirect direct = net::fetch_direct_measured(options_.prover, p.text, options_.query);
+        ApiReply reply;
+        reply.body = direct.json;  // resultado SQL explicita e irrevocablemente NO verificado
+        reply.headers.emplace_back("X-TT-Direct-Roundtrip-Seconds", seconds_text(direct.roundtrip_seconds));
+        reply.headers.emplace_back("X-TT-Direct-Bytes", std::to_string(direct.json.size()));
+        reply.headers.emplace_back("X-TT-Direct-Client-Seconds", seconds_text(seconds_since(start)));
+        if (direct.server_timings) {
+            const auto& t = *direct.server_timings;
+            reply.headers.emplace_back("X-TT-Direct-Sql-Seconds", seconds_text(t.sql_seconds));
+            reply.headers.emplace_back("X-TT-Direct-Encoding-Seconds", seconds_text(t.encoding_seconds));
+            reply.headers.emplace_back("X-TT-Direct-Queue-Seconds", seconds_text(t.queue_seconds));
+            reply.headers.emplace_back("X-TT-Direct-Handler-Seconds", seconds_text(t.handler_seconds));
+        }
+        QueryRecord record;
+        record.query = p.text;
+        record.outcome = "direct";
+        record.note = "SQL sin verificacion criptografica";
+        record.prover_seconds = direct.roundtrip_seconds;
+        record.bytes = direct.json.size();
+        if (logger_) logger_(record);
+        return reply;
+    } catch (const std::exception& e) {
+        QueryRecord record;
+        record.query = p.text;
+        record.outcome = "no_answer";
+        record.note = net::safe_text(e.what());
+        record.prover_seconds = seconds_since(start);
+        if (logger_) logger_(record);
+        JsonWriter w;
+        w.begin_object().key("outcome").value("no_answer").key("message").value(record.note).end_object();
+        return {200, w.str(), {}};
+    }
 }
 
 }  // namespace tt::ui

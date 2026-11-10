@@ -7,6 +7,7 @@
 // verificado. Se detiene con Ctrl+C o con SIGTERM.
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -112,8 +113,11 @@ bool is_loopback(const std::string& host) {
  * Imprime una consulta atendida en la bitacora de la interfaz.
  */
 void log_query(const ui::QueryRecord& r) {
-    if (r.outcome == "verified") {
-        std::printf("[ui] \"%s\" -> verificada: %s; probador %.2f s (%s), verificacion %.2f s\n", r.query.c_str(),
+    if (r.outcome == "direct") {
+        std::printf("[ui] \"%s\" -> SQL directo SIN verificar (HTTP %.2f s, %s)\n",
+                    r.query.c_str(), r.prover_seconds, cli::size_text(r.bytes).c_str());
+    } else if (r.outcome == "verified") {
+        std::printf("[ui] \"%s\" -> verificada: %s; obtencion HTTP %.2f s (%s), verificacion %.2f s\n", r.query.c_str(),
                     r.note.c_str(), r.prover_seconds, cli::size_text(r.bytes).c_str(), r.verify_seconds);
     } else if (r.outcome == "rejected") {
         std::printf("[ui] \"%s\" -> RECHAZADA: %s\n", r.query.c_str(), r.note.c_str());
@@ -201,6 +205,11 @@ int run_ui(const std::vector<std::string>& args) {
     portal_options.query.read_timeout_seconds = opt.timeout_seconds;
     portal_options.health.connect_timeout_seconds = 2;
     portal_options.health.read_timeout_seconds = 5;
+    const char* direct_env = std::getenv("TT_ENABLE_DIRECT_BENCH");
+    portal_options.direct_benchmark = direct_env != nullptr && std::string(direct_env) == "1";
+    if (portal_options.direct_benchmark) {
+        std::printf("[ui] SQL directo habilitado para evaluacion, SIN verificacion criptografica\n");
+    }
     ui::Portal portal(state.digest, state.public_key.aso, portal_options, log_query);
 
     // Las senales se bloquean antes de crear los hilos del servidor.

@@ -11,9 +11,13 @@
 //   - Un probador con otro estado: sus respuestas se rechazan (RNF08).
 
 #include <atomic>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <thread>
 #include <vector>
+
+#include "httplib.h"
 
 #include "service_fixture.hpp"
 #include "test_support.hpp"
@@ -34,11 +38,13 @@ public:
     /*
      * Abre un puerto libre en 127.0.0.1 y empieza a atender en otro hilo.
      */
-    explicit RunningServer(query::ProverContext context, net::RequestLogger logger = {}) {
+    explicit RunningServer(query::ProverContext context, net::RequestLogger logger = {},
+                           bool allow_direct = false, net::DirectRunner direct = {}) {
         net::ServerOptions options;
+        options.direct_benchmark = allow_direct;
         options.host = "127.0.0.1";
         options.port = 0;
-        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger));
+        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct));
         port_ = server_->bind();
         thread_ = std::thread([this] { server_->run(); });
         server_->wait_until_ready();
@@ -66,6 +72,41 @@ public:
 
 private:
     std::unique_ptr<net::ProverServer> server_;
+    std::thread thread_;
+    int port_ = 0;
+};
+
+// Servidor HTTP controlado para probar compatibilidad y metadatos falsos.
+// La respuesta TTRSP es autentica: solamente cambiamos cabeceras HTTP.
+class MetricsMockServer {
+public:
+    MetricsMockServer(std::vector<unsigned char> payload, bool malformed) {
+        server_.Post(net::kQueryPath, [payload = std::move(payload), malformed](const httplib::Request&,
+                                                                                 httplib::Response& res) {
+            res.set_content(std::string(payload.begin(), payload.end()), "application/octet-stream");
+            if (malformed) {
+                res.set_header("X-TT-Metrics-Version", "1");
+                res.set_header("X-TT-Generation-Seconds", "nan");
+                res.set_header("X-TT-Encoding-Seconds", "0.01");
+                res.set_header("X-TT-Queue-Seconds", "0.01");
+                res.set_header("X-TT-Handler-Seconds", "0.10");
+            }
+        });
+        port_ = server_.bind_to_any_port("127.0.0.1");
+        if (port_ <= 0) throw std::runtime_error("no se pudo abrir el servidor de prueba");
+        thread_ = std::thread([this] { server_.listen_after_bind(); });
+        server_.wait_until_ready();
+    }
+
+    ~MetricsMockServer() {
+        server_.stop();
+        if (thread_.joinable()) thread_.join();
+    }
+
+    net::Endpoint endpoint() const { return {"127.0.0.1", port_}; }
+
+private:
+    httplib::Server server_;
     std::thread thread_;
     int port_ = 0;
 };
@@ -127,6 +168,36 @@ int main() {
     RunningServer server(fx.context(), [&](const net::RequestRecord&) { ++logged; });
     const net::Endpoint at = server.endpoint();
 
+    section("Referencia SQL directa deshabilitada por defecto");
+    check(server_status([&] { net::fetch_direct_measured(at, "C2 1"); }) == 403,
+          "el servidor normal NO expone SQL directo");
+
+    section("Referencia SQL directa controlada, sin MySQL");
+    {
+        std::size_t calls = 0;
+        net::DirectRunner fake = [&](const query::ParsedQuery& q) {
+            ++calls;
+            check(query::to_sql(q) == "SELECT * FROM academic_record WHERE student_id = 1",
+                  "la ruta entrega una consulta validada del catalogo, no SQL libre");
+            net::DirectReply reply;
+            reply.json = "{\"outcome\":\"direct\",\"unverified\":true,\"result\":{\"rows\":[]}}";
+            reply.rows = 1;
+            reply.sql_seconds = 0.001;
+            reply.encoding_seconds = 0.0001;
+            return reply;
+        };
+        RunningServer benchmark(fx.context(), {}, true, fake);
+        const net::MeasuredDirect d = net::fetch_direct_measured(benchmark.endpoint(), "C2 1");
+        check(d.roundtrip_seconds >= 0 && d.server_timings && d.server_timings->sql_seconds >= 0 &&
+                  d.json.find("\"unverified\":true") != std::string::npos && calls == 1,
+              "referencia SQL: tiempos y JSON no verificado");
+        check(server_status([&] { net::fetch_direct_measured(benchmark.endpoint(), "C99 1"); }) == 400 &&
+                  server_status([&] { net::fetch_direct_measured(benchmark.endpoint(), "range student age 1 2"); }) == 422 &&
+                  server_status([&] { net::fetch_direct_measured(benchmark.endpoint(), "C2 1; DROP TABLE student"); }) == 400 &&
+                  calls == 1,
+              "no se permite SQL arbitrario ni se ejecutan consultas invalidas");
+    }
+
     section("Estado del probador por la red");
     {
         const net::HealthInfo info = net::fetch_health(at);
@@ -144,9 +215,55 @@ int main() {
     }
     {
         const query::ParsedQuery q = query::parse_query({"C4", "6", "8"});
+        const net::MeasuredAnswer measured = net::fetch_answer_measured(at, "C4 6 8");
+        check(measured.server_timings.has_value(), "el servidor publica metricas HTTP version 1");
+        if (measured.server_timings) {
+            const auto& m = *measured.server_timings;
+            check(m.generation_seconds >= 0 && m.encoding_seconds >= 0 &&
+                      m.handler_seconds >= m.generation_seconds && m.queue_seconds >= 0,
+                  "tiempos de generacion, codificacion, espera y manejo coherentes");
+            check(measured.roundtrip_seconds >= 0,
+                  "el tiempo de ida y vuelta se mide en el cliente");
+            check(m.row_fetch_seconds && *m.row_fetch_seconds >= 0 &&
+                      *m.row_fetch_seconds <= m.generation_seconds + 0.01,
+                  "la lectura de filas medida no supera ProofGen");
+        }
+        // Las nuevas cabeceras se interpretan solo si el conjunto esta
+        // completo y es coherente con la duracion de ProofGen.
+        const auto join = net::fetch_answer_measured(at, "C8");
+        check(join.server_timings && join.server_timings->ait_seconds &&
+                  join.server_timings->merkle_seconds && join.server_timings->aso_seconds,
+              "C8 publica el desglose detallado opcional");
+        if (join.server_timings && join.server_timings->ait_seconds &&
+            join.server_timings->merkle_seconds && join.server_timings->aso_seconds) {
+            const auto& m = *join.server_timings;
+            const double accounted = *m.ait_seconds + *m.merkle_seconds + *m.aso_seconds +
+                                     m.row_fetch_seconds.value_or(0);
+            check(accounted <= m.generation_seconds + 0.01,
+                  "las cabeceras de etapas no exceden el tiempo de ProofGen");
+        }
+        const auto join_query = query::parse_query({"C8"});
+        check(query::verify_query(fx.state.digest, fx.keys.pk.aso, join_query, join.bytes).accepted,
+              "el desglose HTTP no afecta la aceptacion de C8");
         const std::vector<unsigned char> local = query::answer_query(fx.context(), q).bytes;
+        check(measured.bytes == local, "las metricas no cambian los bytes autenticados");
         check(net::fetch_answer(at, "C4 6 8") == local, "por la red llegan los mismos bytes que genera el nucleo");
         check(net::fetch_answer(at, "  C4   6\t8\n") == local, "los espacios de mas no cambian la consulta");
+    }
+
+    section("Cabeceras ausentes o maliciosas no afectan Verify");
+    {
+        const query::ParsedQuery q = query::parse_query({"C4", "6", "8"});
+        const auto original = query::answer_query(fx.context(), q).bytes;
+        for (bool malformed : {false, true}) {
+            MetricsMockServer mock(original, malformed);
+            const net::MeasuredAnswer answer = net::fetch_answer_measured(mock.endpoint(), "C4 6 8");
+            check(!answer.server_timings.has_value(), malformed ? "metadatos falsos ignorados" :
+                  "servidor antiguo sin metadatos es compatible");
+            check(answer.bytes == original &&
+                  query::verify_query(fx.state.digest, fx.keys.pk.aso, q, answer.bytes).accepted,
+                  "Verify sigue comprobando TTRSP aunque falten metadatos");
+        }
     }
 
     section("Errores que informa el probador");

@@ -1,8 +1,8 @@
 # Interfaz del caso de estudio
 
 La interfaz es una página web de control escolar que muestra expedientes y
-consultas del catálogo. Todo lo que muestra pasó por el esquema de
-verificación. La sirve el propio verificador con `tt_verifier ui`, así que la
+consultas del catálogo. Los resultados académicos que muestra pasaron por
+el esquema de verificación; los tiempos de rendimiento son informativos. La sirve el propio verificador con `tt_verifier ui`, así que la
 página no verifica nada por su cuenta: cada consulta se envía al probador
 por la red, se verifica en C++ con δ y la clave pública, y la página
 solo pinta el veredicto (verificada, rechazada o sin respuesta) y el
@@ -86,8 +86,11 @@ calcula el verificador con el mismo `parse_query`, y si δ no tiene los
 árboles la consulta ni siquiera se envía (RNF05). Al consultar se muestra:
 
 - el sello y el veredicto (con el motivo si se rechazó);
-- el tiempo del probador (ProofGen y red, con el tamaño recibido) junto al
-  del verificador, para ver la diferencia de costo entre los dos;
+- el tiempo de ida y vuelta HTTP desde el verificador, la generación y
+  codificación declaradas por el probador, la espera en cola, el manejo de la
+  petición, la sobrecarga estimada de red/HTTP y el tiempo de Verify;
+- el tiempo de solicitud medido desde el navegador, sin incluir el dibujado
+  de la página, y el tamaño conjunto de la respuesta `(R, π)`;
 - el resultado verificado, en tablas de 50 filas por página o como un
   solo valor para AVG, COUNT, MIN y SUM.
 
@@ -107,7 +110,11 @@ Ejemplo de respuesta de `/api/query` (recortada):
  "sql":"SELECT AVG(grade) FROM academic_record WHERE student_id = 1",
  "trees":["academic_record(student_id -> grade)"],
  "state":{"id":"da3a3972...","version":1},
- "prover":{"address":"127.0.0.1:7070","status":200,"seconds":0.011,"bytes":1454},
+ "prover":{"address":"127.0.0.1:7070","status":200,"seconds":0.011,"bytes":1454,
+   "timings":{"generation_seconds":0.007,"encoding_seconds":0.0002,
+     "queue_seconds":0.000001,"handler_seconds":0.008},
+   "network_overhead_seconds":0.003},
+ "client_total_seconds":0.013,
  "verification":{"seconds":0.0018,"stages":[]},
  "outcome":"verified","message":"","detail":"SUM 393 / COUNT 53 = AVG 7.415094",
  "result":{"columns":["AVG(grade)"],"row_count":1,"truncated":false,"rows":[[7.41509433962264]]}}
@@ -117,6 +124,43 @@ Ejemplo de respuesta de `/api/query` (recortada):
 `no_answer` (el probador no respondió o respondió con error; `prover.status`
 trae el código HTTP o 0 si no hubo conexión), `invalid` (400) o
 `unsupported` (422).
+
+### Registro y exportación de mediciones
+
+El panel superior guarda en memoria las consultas ejecutadas desde ambas
+vistas, incluidas las rechazadas y las que no obtuvieron respuesta. Al
+pulsar **Exportar CSV** se descarga un archivo local UTF-8 con la fecha
+UTC, el texto de la consulta, el veredicto, el estado δ, el tamaño TTRSP,
+los tiempos disponibles y los nombres/tiempos de las etapas de Verify.
+No se guardan las filas devueltas y el archivo **no** se envía a la base ni
+al probador. Los datos se pierden al recargar o cerrar la pestaña; hay un
+límite de 1000 ejecuciones en memoria. **Limpiar registro** permite comenzar
+una nueva sesión experimental.
+
+El campo `prover.seconds` se conserva por compatibilidad con la interfaz
+anterior, pero representa el **POST completo visto por el verificador**,
+no solamente ProofGen. `prover.timings` contiene las duraciones enviadas
+por el probador en cabeceras HTTP, o `null` cuando faltan o son inválidas.
+`client_total_seconds` abarca la obtención y la verificación C++ (incluida
+la espera del candado), pero no la construcción del JSON. El navegador
+registra además `browser_request_seconds`, que incluye la API y la lectura
+del JSON, no el renderizado.
+
+El valor `network_overhead_seconds` se calcula como la diferencia entre
+el POST medido por el cliente y el manejo de la petición medido por el
+servidor. **No equivale a la latencia física de red**: incluye transferencia,
+HTTP, programación de hilos y diferencias de fronteras de medición. Si el
+resultado no es comparable, se entrega `null` en lugar de un número
+negativo. Por otro lado, `handler_seconds` contiene los tiempos de cola,
+ProofGen y codificación, por lo que **no deben sumarse esas columnas**.
+La generación incluye los accesos a los datos, no es tiempo de CPU
+criptográfica aislado.
+
+Las duraciones declaradas por un probador malicioso podrían falsificarse:
+son metadatos **no autenticados**, útiles para rendimiento pero no para
+aceptar respuestas. El veredicto se decide exclusivamente con `(R, π)`,
+δ y la clave pública. El tamaño `prover.bytes` corresponde a `(R, π)`
+completo, no a `π` por separado.
 
 ## Decisiones y su justificación
 
@@ -180,9 +224,9 @@ verificadas por `course_id`.
 
 El probador procesa una consulta a la vez, así que pedirlas todas juntas
 no ahorraría tiempo. En orden, la página puede ir llenando cada parte
-conforme se verifica, y C14 (la más lenta, unos 8 s en el contenedor) va
-al final. Un expediente completo tarda unos 11 s, de los cuales el
-verificador ocupa menos de 0.1 s.
+conforme se verifica. C14 se realiza al final por su costo potencialmente
+elevado. La latencia depende del tamaño de la base, de los parámetros
+criptográficos y de los recursos de las máquinas.
 
 ### 9. La página es HTML, CSS y JavaScript sin bibliotecas externas
 
@@ -228,6 +272,10 @@ sobre la base pequeña en memoria (sin MySQL) y comprueba:
 - El escritor de JSON: escapes, comas, NaN y enteros extremos.
 - Las 14 formas del catálogo (y `range`) a través de `/api/query`, con el
   resultado igual al de un oráculo que recorre las tablas.
+- La presencia de los tiempos de servidor en el JSON, sin cambiar el
+  resultado verificado ni mostrar filas ante una respuesta rechazada.
+- La omisión explícita de las métricas remotas si el probador devuelve un
+  error o está desconectado.
 - Las consultas mal escritas o no soportadas no llegan al probador.
 - Un probador con otro δ produce `rejected` y `/api/status` lo avisa.
 - Un probador sin clave pública (C7) o detenido produce `no_answer`.
@@ -237,7 +285,9 @@ sobre la base pequeña en memoria (sin MySQL) y comprueba:
   - ningún archivo fuera de `ui/web` se puede leer.
 
 `ctest` también comprueba que `tt_verifier ui` sin δ termina con un mensaje
-claro y código 1.
+claro y código 1. Si está instalado Node.js, se ejecuta además
+`ui_metrics_js`, una prueba del desglose visual y la exportación CSV sin
+requerir el navegador ni bibliotecas adicionales.
 
 ## En contenedores
 

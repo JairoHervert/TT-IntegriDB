@@ -58,11 +58,50 @@ int main() {
     for (const test::CatalogCase& c : test::catalog_cases()) {
         const query::ParsedQuery q = query::parse_query(c.words);
         const query::ProverReply reply = query::answer_query(ctx, q);
+        check(reply.generation_seconds >= 0 && reply.encoding_seconds >= 0 && reply.row_fetch_seconds >= 0 &&
+                  reply.row_fetch_seconds <= reply.generation_seconds + 0.01,
+              name_of(c.words) + ": tiempos internos y lecturas de D coherentes");
         const query::VerifierOutcome v = query::verify_query(fx.state.digest, fx.keys.pk.aso, q, reply.bytes);
         const test::Expected expected = test::oracle(fx.base, c.words);
         check(v.accepted && test::matches(v.result, expected) && reply.stale_rows == 0,
               name_of(c.words) + ": aceptada y con el resultado correcto" + (v.accepted ? "" : " (" + v.reason + ")"));
         check(!query::required_trees(q, fx.state.digest).empty(), name_of(c.words) + ": tiene arboles en delta");
+    }
+
+    section("Medicion de lecturas de RowStore sin alterar ProofGen");
+    {
+        const query::ParsedQuery selection = query::parse_query({"C4", "6", "8"});
+        const query::ProverReply sampled = query::answer_query(ctx, selection);
+        check(sampled.row_fetch_calls > 0 && sampled.row_fetch_rows > 0 && sampled.row_fetch_seconds >= 0,
+              "las consultas con filas registran acceso a D");
+        const query::ParsedQuery average = query::parse_query({"C10", "1"});
+        const query::ProverReply no_fetch = query::answer_query(ctx, average);
+        check(no_fetch.row_fetch_calls == 0 && no_fetch.row_fetch_seconds == 0,
+              "C10 no inventa lecturas de D");
+    }
+
+    section("Etapas no solapadas de C8 y C14");
+    for (const std::vector<std::string>& words : {std::vector<std::string>{"C8"},
+                                                 std::vector<std::string>{"C14", "1"}}) {
+        const auto q = query::parse_query(words);
+        const auto reply = query::answer_query(ctx, q);
+        const double accounted = reply.ait_seconds + reply.merkle_seconds + reply.aso_seconds +
+                                 reply.row_fetch_seconds;
+        check(reply.detailed_stages && reply.ait_seconds >= 0 && reply.merkle_seconds >= 0 &&
+                  reply.aso_seconds >= 0 && accounted <= reply.generation_seconds + 0.01,
+              name_of(words) + ": las operaciones medidas no superan ProofGen");
+        const auto verified = query::verify_query(fx.state.digest, fx.keys.pk.aso, q, reply.bytes);
+        check(verified.accepted && verified.stages.size() == 4,
+              name_of(words) + ": Verify conserva el veredicto y publica cuatro etapas");
+        if (verified.stages.size() == 4) {
+            double sum = 0;
+            for (const auto& stage : verified.stages) {
+                check(stage.second >= 0, name_of(words) + ": duracion no negativa de " + stage.first);
+                sum += stage.second;
+            }
+            check(sum <= verified.seconds + 0.01,
+                  name_of(words) + ": las etapas de Verify no superan su duracion total");
+        }
     }
 
     section("Comprobacion literal del ASO en C1 a C6");

@@ -13,6 +13,7 @@
 #include "tt/db/row_hash.hpp"
 #include "tt/merkle/tree.hpp"
 #include "tt/query/query.hpp"
+#include "stage_metrics.hpp"
 
 namespace tt::query {
 namespace {
@@ -94,8 +95,10 @@ RowProof prove_row(const scheme::AuthenticatedTable& tab, db::Row row,
     if (!pos)
         throw ProverError(std::string(config.query_id) +
                           ": fila de MySQL no pertenece al estado autenticado: " + std::to_string(ref));
-    if (db::row_hash(tab.schema, row) != tab.rows.leaves().at(*pos)) ++stale;
-    return {std::move(row), tab.rows.prove(*pos)};
+    return metrics::measure(metrics::Stage::kMerkle, [&] {
+        if (db::row_hash(tab.schema, row) != tab.rows.leaves().at(*pos)) ++stale;
+        return RowProof{std::move(row), tab.rows.prove(*pos)};
+    });
 }
 
 /*
@@ -121,8 +124,11 @@ void verify_row(const scheme::TableDigest& tab, const RowProof& rp,
     }
     const auto ref = std::get<std::int64_t>(rp.row.at(tab.schema.reference_column));
     if (!seen.insert(ref).second) throw std::runtime_error(prefix + "referencia repetida");
-    if (!merkle::verify_inclusion(tab.rows_root, tab.row_count,
-                                  db::row_hash(tab.schema, rp.row), rp.inclusion))
+    const bool valid = metrics::measure(metrics::Stage::kMerkle, [&] {
+        return merkle::verify_inclusion(tab.rows_root, tab.row_count,
+                                        db::row_hash(tab.schema, rp.row), rp.inclusion);
+    });
+    if (!valid)
         throw std::runtime_error(prefix + "fila sin prueba de Merkle valida");
 }
 
@@ -145,9 +151,9 @@ JoinCoreAnswer answer_join_common(const scheme::AuthenticatedDatabase& adb,
         if (!digest.find_tree(spec)) throw UnsupportedQuery(std::string(config.query_id) + ": falta AIT " + spec.label());
         const auto* tree = adb.find_tree(spec);
         if (!tree || !tabs[k]) throw ProverError(std::string(config.query_id) + ": falta AIT o tabla en D~");
-        ranged[k] = tree->range(kLo, kHi);
+        ranged[k] = metrics::measure(metrics::Stage::kAit, [&] { return tree->range(kLo, kHi); });
         response.ranges[k] = std::move(ranged[k].proof);
-        all_fields[k] = elements(ranged[k].values);
+        all_fields[k] = metrics::measure(metrics::Stage::kAso, [&] { return elements(ranged[k].values); });
     }
     const std::unordered_set<std::int64_t> right_keys(ranged[1].values.begin(), ranged[1].values.end());
     const std::unordered_set<std::int64_t> left_keys(ranged[0].values.begin(), ranged[0].values.end());
@@ -177,9 +183,11 @@ JoinCoreAnswer answer_join_common(const scheme::AuthenticatedDatabase& adb,
     std::array<std::vector<std::int64_t>, 2> leftovers;
     for (const auto key : ranged[0].values) if (!right_keys.count(key)) leftovers[0].push_back(key);
     for (const auto key : ranged[1].values) if (!left_keys.count(key)) leftovers[1].push_back(key);
-    for (int k = 0; k < 2; ++k) response.splits[k] = aso::prove_split(elements(leftovers[k]), pk);
-    response.disjoint[0] = aso::prove_disjoint(elements(leftovers[0]), all_fields[1], pk);
-    response.disjoint[1] = aso::prove_disjoint(elements(leftovers[1]), all_fields[0], pk);
+    metrics::measure(metrics::Stage::kAso, [&] {
+        for (int k = 0; k < 2; ++k) response.splits[k] = aso::prove_split(elements(leftovers[k]), pk);
+        response.disjoint[0] = aso::prove_disjoint(elements(leftovers[0]), all_fields[1], pk);
+        response.disjoint[1] = aso::prove_disjoint(elements(leftovers[1]), all_fields[0], pk);
+    });
     return out;
 }
 
@@ -199,7 +207,9 @@ JoinCoreVerification verify_join_common(const scheme::DatabaseDigest& digest,
             const auto* tree = digest.find_tree(join_tree(names[k], config));
             tables[k] = digest.find_table(names[k]);
             if (!tree || !tables[k]) throw std::runtime_error(prefix + "falta AIT o tabla autenticada");
-            verified[k] = ait::verify_range(tree->root, kLo, kHi, response.ranges[k]);
+            verified[k] = metrics::measure(metrics::Stage::kAit, [&] {
+                return ait::verify_range(tree->root, kLo, kHi, response.ranges[k]);
+            });
             if (!verified[k].accepted) throw std::runtime_error(prefix + "RangeCover invalido: " + verified[k].reason);
             full[k] = full_accumulator(verified[k], config);
             if (verified[k].count != tables[k]->row_count)
@@ -237,13 +247,19 @@ JoinCoreVerification verify_join_common(const scheme::DatabaseDigest& digest,
         for (int k = 0; k < 2; ++k) {
             if (matched[k].elements.size() > verified[k].count)
                 throw std::runtime_error(prefix + "mas filas que el AIT autenticado");
-            if (!aso::verify_split(full[k].rest_g1, matched[k], response.splits[k], pk))
+            const bool split_ok = metrics::measure(metrics::Stage::kAso, [&] {
+                return aso::verify_split(full[k].rest_g1, matched[k], response.splits[k], pk);
+            });
+            if (!split_ok)
                 throw std::runtime_error(prefix + "certificado de separacion ASO invalido");
         }
         // Bezout impide que un elemento del complemento participe de una
         // coincidencia omitida en el otro conjunto autentico.
-        if (!aso::verify_disjoint(response.splits[0], full[1], response.disjoint[0]) ||
-            !aso::verify_disjoint(response.splits[1], full[0], response.disjoint[1]))
+        const bool disjoint_ok = metrics::measure(metrics::Stage::kAso, [&] {
+            return aso::verify_disjoint(response.splits[0], full[1], response.disjoint[0]) &&
+                   aso::verify_disjoint(response.splits[1], full[0], response.disjoint[1]);
+        });
+        if (!disjoint_ok)
             throw std::runtime_error(prefix + "certificado ASO de completitud del JOIN invalido");
         out.joined_rows = out.rows[0].size();  // Clave de la tabla derecha unica.
         out.accepted = true;

@@ -104,9 +104,10 @@ los ataques se rechazan en ambos.
 ### Dónde sí hace falta el ASO
 
 En las consultas que combinan conjuntos (rango en dos columnas C7, C11–C13;
-JOIN C8–C9; SUM/AVG C10, C14) el resultado ya no coincide con nodos
-completos, y ahí el ASO es indispensable (intersección y suma). Es la
-siguiente etapa.
+JOIN C8–C9; agregaciones C10 y C14) el resultado ya no coincide con nodos
+completos, y se requieren las comprobaciones específicas de intersección
+y/o agregación del esquema. Estas consultas están implementadas en el catálogo
+C1–C14; no debe extenderse a ellas la optimización descrita para C1–C6.
 
 ## Decisión 2: el probador toma las filas de la base D
 
@@ -190,15 +191,13 @@ Unos 500 bytes por fila de la respuesta son la prueba de Merkle (14 hashes
 de 32 bytes). Si el tamaño importara, se puede usar una prueba de
 inclusión conjunta para filas vecinas, que comparte los hashes comunes.
 
-## Para actualizar en el reporte
+## Resumen de las decisiones de verificación
 
-- En Verify para rangos, la implementación comprueba los contadores
-  autenticados de los nodos de cobertura en lugar de los acumuladores, con
-  el argumento de la decisión 1; la comprobación del artículo sigue
-  disponible (`--aso`).
-- La respuesta incluye el id del estado y la consulta, para que una
-  respuesta de otro estado o de otra consulta se rechace con un motivo
-  claro (RNF08).
+En las consultas de selección y rango C1–C6, Verify comprueba los contadores
+autenticados de los nodos de cobertura; la comprobación adicional con
+acumuladores sigue disponible mediante `--aso`. La respuesta incorpora el
+identificador del estado y la consulta para rechazar pruebas correspondientes
+a otro estado u otra operación (RNF08).
 
 ## C13: MAX/MIN por reduccion a rango (IntegriDB §4.4)
 

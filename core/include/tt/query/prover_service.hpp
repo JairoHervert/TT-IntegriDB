@@ -42,6 +42,17 @@ struct ProverReply {
     std::vector<unsigned char> bytes;  // (R, pi) en formato TTRSP, listo para enviarse
     std::string summary;               // resumen para la bitacora del probador
     std::size_t stale_rows = 0;        // filas de D que cambiaron despues de Setup
+    // Mediciones operativas, no autenticadas por el protocolo.
+    double generation_seconds = 0;  // ProofGen, incluidas lecturas de D (no solo CPU)
+    double encoding_seconds = 0;    // codificacion binaria TTRSP
+    double row_fetch_seconds = 0;   // fetch_rows() de D: conexion y lectura incluidas
+    std::size_t row_fetch_calls = 0; // numero de llamadas al origen de filas
+    std::size_t row_fetch_rows = 0;  // filas solicitadas al origen de datos
+    // Solo C8, C9 y C14: duraciones no solapadas de operaciones concretas.
+    bool detailed_stages = false;
+    double ait_seconds = 0;     // consultas de rango a estructuras AIT
+    double merkle_seconds = 0;  // hashes y caminos de inclusion de filas
+    double aso_seconds = 0;     // Split, Bezout y conversiones necesarias
 };
 
 /*

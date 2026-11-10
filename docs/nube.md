@@ -59,8 +59,9 @@ sudo usermod -aG docker $USER      # cerrar sesión y volver a entrar
 Igual que en la VM. El estado se calcula sobre la base local, que se cargó
 con el mismo `academic_records_db/init/02_seed_data.sql` que usará la nube;
 por eso δ coincide con lo que va a tener el servidor. La base local no debe
-tener cambios después de cargarse; si los tiene, vuelve a crearla con
-`docker compose down -v && docker compose up -d db` antes de Setup.
+tener cambios después de cargarse. Si hay diferencias, preparar un
+escenario aislado con datos y estado autenticado nuevos antes de Setup,
+sin eliminar los volúmenes de los experimentos conservados.
 
 ```bash
 export TT_DB_PASS=app_pass_2026

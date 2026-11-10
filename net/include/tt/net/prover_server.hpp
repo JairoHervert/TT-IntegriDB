@@ -33,6 +33,7 @@ struct ServerOptions {
     std::string host = "0.0.0.0";   // interfaz donde escucha (0.0.0.0: todas)
     int port = kDefaultPort;        // 0: el sistema elige un puerto libre (pruebas)
     std::size_t threads = 4;        // hilos para atender conexiones
+    bool direct_benchmark = false;  // ruta /v1/direct optativa, deshabilitada por defecto
     int read_timeout_seconds = 10;  // tiempo maximo para recibir la peticion
     int write_timeout_seconds = 120;  // tiempo maximo por escritura de la respuesta
 };
@@ -45,12 +46,32 @@ struct RequestRecord {
     std::string query;           // texto de la consulta (recortado y saneado)
     int status = 0;              // codigo HTTP enviado
     std::size_t bytes = 0;       // tamano del cuerpo enviado
-    double seconds = 0;          // tiempo de procesamiento
+    double seconds = 0;             // procesamiento HTTP (excluye envio TCP)
+    double queue_seconds = 0;       // espera del candado
+    double generation_seconds = 0;  // ProofGen, incluidas lecturas de D
+    double encoding_seconds = 0;    // codificacion TTRSP
+    double row_fetch_seconds = 0;   // lectura de filas por RowStore
+    std::size_t row_fetch_calls = 0; // llamadas a RowStore
+    std::size_t row_fetch_rows = 0;  // filas obtenidas
+    bool detailed_stages = false;     // disponibles solo para C8, C9 y C14
+    double ait_seconds = 0;          // operaciones AIT instrumentadas
+    double merkle_seconds = 0;       // hashes y pruebas Merkle
+    double aso_seconds = 0;          // operaciones ASO instrumentadas
     std::string note;            // resumen de la respuesta o motivo del error
     std::size_t stale_rows = 0;  // filas de D que cambiaron despues de Setup
 };
 
 using RequestLogger = std::function<void(const RequestRecord&)>;
+
+// El adaptador MySQL ejecuta una consulta del catalogo y devuelve JSON sin
+// prueba criptografica. La biblioteca de red no depende de libmysqlclient.
+struct DirectReply {
+    std::string json;
+    std::size_t rows = 0;
+    double sql_seconds = 0;       // conexion MySQL, SQL y lectura de filas
+    double encoding_seconds = 0;  // conversion a JSON
+};
+using DirectRunner = std::function<DirectReply(const query::ParsedQuery&)>;
 
 // Servidor del probador. No se puede copiar.
 class ProverServer {
@@ -64,7 +85,8 @@ public:
      *   options  interfaz, puerto, hilos y tiempos de espera
      *   logger   funcion que recibe cada peticion atendida (puede ser vacia)
      */
-    ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger = {});
+    ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger = {},
+                 DirectRunner direct_runner = {});
 
     /*
      * Detiene el servidor si sigue escuchando.

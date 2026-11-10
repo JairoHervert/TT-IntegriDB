@@ -59,3 +59,6 @@ public_key*.txt
 *.key
 
 comands_for_me.txt
+
+# Escenarios de escalabilidad (datos y claves del propietario).
+bench_data/

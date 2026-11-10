@@ -28,6 +28,8 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "tt/aso/keys.hpp"
 #include "tt/net/prover_client.hpp"
@@ -40,6 +42,7 @@ namespace tt::ui {
 struct ApiReply {
     int status = 200;
     std::string body;
+    std::vector<std::pair<std::string, std::string>> headers;  // tiempos de la ruta experimental
 };
 
 // Registro de una consulta atendida, para la bitacora de tt_verifier ui.
@@ -48,7 +51,7 @@ struct QueryRecord {
     std::string outcome;        // verified, rejected, no_answer, invalid, unsupported
     std::string note;           // resumen del resultado o motivo
     std::size_t bytes = 0;      // tamano de la respuesta del probador
-    double prover_seconds = 0;  // envio + ProofGen + recepcion
+    double prover_seconds = 0;  // POST completo: envio + ProofGen + recepcion
     double verify_seconds = 0;  // Verify en este proceso
 };
 
@@ -60,6 +63,7 @@ struct PortalOptions {
     net::ClientOptions query;       // tiempos y limite para /v1/query
     net::ClientOptions health;      // tiempos para /v1/health (cortos)
     std::size_t max_rows = 200000;  // filas maximas que se envian a la pagina
+    bool direct_benchmark = false;  // comparacion SQL directa, solo uso experimental
 };
 
 // Interfaz del caso de estudio sobre un delta y una clave publica ya
@@ -101,7 +105,8 @@ public:
 
     /*
      * POST /api/query: envia la consulta al probador, verifica la respuesta y
-     * devuelve el veredicto con el resultado.
+     * devuelve el veredicto con el resultado. El bloque prover.timings es
+     * opcional: sus tiempos informativos no participan en Verify.
      *
      * Parametros:
      *   text  la consulta, por ejemplo "C4 6 8"
@@ -111,6 +116,13 @@ public:
      *   esta mal escrita; 422 si no esta soportada.
      */
     ApiReply query(const std::string& text);
+
+    /*
+     * POST /api/direct: referencia SQL directa sin prueba ni Verify. El
+     * resultado no es confiable y el servidor debe tener habilitado el
+     * modo experimental. Se retransmite JSON sin afirmar autenticidad.
+     */
+    ApiReply direct(const std::string& text);
 
 private:
     const scheme::DatabaseDigest& digest_;

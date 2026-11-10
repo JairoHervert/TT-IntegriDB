@@ -81,6 +81,8 @@ services:
       # asi la contrasena no se escribe en este archivo para el probador. Si
       # no se exporto, el probador no arranca y su log dice que falta.
       TT_DB_PASS:
+      # Modo experimental, deshabilitado por defecto. No usar en produccion.
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
     volumes:
       # delta, D~ y pk que preparo 'tt_owner publish' (solo lectura).
       - ./deploy/prover:/srv/tt/prover:ro
@@ -102,6 +104,7 @@ services:
       prover:
         condition: service_healthy
     environment:
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
       TT_PROVER_ADDR: prover:7070
     volumes:
       # delta y pk (lo publico del propietario para el cliente), solo lectura.

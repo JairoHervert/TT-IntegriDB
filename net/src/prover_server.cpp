@@ -4,7 +4,9 @@
 
 #include <chrono>
 #include <exception>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +29,16 @@ double seconds_since(Clock::time_point start) {
 }
 
 /*
+ * Escribe una duracion con nueve decimales para las cabeceras informativas.
+ * Estas mediciones no estan autenticadas por la prueba criptografica.
+ */
+std::string metric_text(double seconds) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(9) << seconds;
+    return out.str();
+}
+
+/*
  * Indica si el cuerpo de la peticion solo tiene ASCII imprimible y espacios.
  */
 bool plain_text(const std::string& body) {
@@ -43,7 +55,7 @@ bool plain_text(const std::string& body) {
  */
 std::string library_error_text(int status) {
     switch (status) {
-        case 404: return "ruta desconocida; las rutas del probador son POST /v1/query y GET /v1/health";
+        case 404: return "ruta desconocida; consulta POST /v1/query, POST /v1/direct o GET /v1/health";
         case 405: return "metodo no permitido en esta ruta";
         case 413: return "la consulta excede " + std::to_string(kMaxQueryBytes) + " bytes";
         default: return "peticion no valida";
@@ -58,6 +70,7 @@ struct ProverServer::Impl {
     query::ProverContext context;
     ServerOptions options;
     RequestLogger logger;
+    DirectRunner direct_runner;
     httplib::Server server;
     std::mutex work_mutex;     // una consulta a la vez (ver prover_server.hpp)
     std::string health_text;   // cuerpo fijo de /v1/health
@@ -92,7 +105,9 @@ struct ProverServer::Impl {
             } else {
                 const std::vector<std::string> words = split_words(req.body);
                 const query::ParsedQuery parsed = query::parse_query(words);
+                const auto wait_start = Clock::now();
                 std::lock_guard<std::mutex> lock(work_mutex);
+                record.queue_seconds = seconds_since(wait_start);
                 // El modulo de NTL es por hilo: cada hilo que atiende una
                 // consulta debe fijarlo antes de usar el grupo.
                 crypto::init_pairing_group();
@@ -102,6 +117,15 @@ struct ProverServer::Impl {
                 record.status = 200;
                 record.note = reply.summary;
                 record.stale_rows = reply.stale_rows;
+                record.generation_seconds = reply.generation_seconds;
+                record.encoding_seconds = reply.encoding_seconds;
+                record.row_fetch_seconds = reply.row_fetch_seconds;
+                record.row_fetch_calls = reply.row_fetch_calls;
+                record.row_fetch_rows = reply.row_fetch_rows;
+                record.detailed_stages = reply.detailed_stages;
+                record.ait_seconds = reply.ait_seconds;
+                record.merkle_seconds = reply.merkle_seconds;
+                record.aso_seconds = reply.aso_seconds;
             }
         } catch (const query::QueryError& e) {
             fail(400, std::string("consulta mal escrita: ") + e.what());
@@ -112,6 +136,83 @@ struct ProverServer::Impl {
         }
         record.bytes = res.body.size();
         record.seconds = seconds_since(start);
+        // El reloj termina antes de entregar la respuesta a HTTP: no mide
+        // el envio por TCP ni el tiempo de recepcion en el verificador.
+        if (record.status == 200) {
+            res.set_header("X-TT-Metrics-Version", "1");
+            res.set_header("X-TT-Generation-Seconds", metric_text(record.generation_seconds));
+            res.set_header("X-TT-Encoding-Seconds", metric_text(record.encoding_seconds));
+            res.set_header("X-TT-Queue-Seconds", metric_text(record.queue_seconds));
+            res.set_header("X-TT-Handler-Seconds", metric_text(record.seconds));
+            res.set_header("X-TT-Row-Fetch-Seconds", metric_text(record.row_fetch_seconds));
+            res.set_header("X-TT-Row-Fetch-Calls", std::to_string(record.row_fetch_calls));
+            res.set_header("X-TT-Row-Fetch-Rows", std::to_string(record.row_fetch_rows));
+            if (record.detailed_stages) {
+                // Metadatos de diagnostico, nunca autenticados por TTRSP.
+                res.set_header("X-TT-AIT-Seconds", metric_text(record.ait_seconds));
+                res.set_header("X-TT-Merkle-Seconds", metric_text(record.merkle_seconds));
+                res.set_header("X-TT-ASO-Seconds", metric_text(record.aso_seconds));
+            }
+        }
+        log(record);
+    }
+
+    /*
+     * Atiende la ruta experimental de SQL directo. Solo admite las
+     * consultas C1 a C14; no interpreta ni ejecuta sentencias SQL libres.
+     * Los tiempos son operativos y no proporcionan ninguna autenticidad.
+     */
+    void handle_direct(const httplib::Request& req, httplib::Response& res) {
+        const auto start = Clock::now();
+        RequestRecord record;
+        record.client = req.remote_addr + ":" + std::to_string(req.remote_port);
+        record.method = req.method;
+        record.path = req.path;
+        record.query = safe_text(req.body, 120);
+        auto fail = [&](int status, const std::string& message) {
+            res.status = status;
+            res.set_content(message + "\n", "text/plain; charset=utf-8");
+            record.status = status;
+            record.note = message;
+        };
+        if (!options.direct_benchmark || !direct_runner) {
+            fail(403, "SQL directo deshabilitado; activa TT_ENABLE_DIRECT_BENCH=1 solo para experimentos");
+        } else {
+            try {
+                if (!plain_text(req.body)) throw query::QueryError("se requiere texto ASCII imprimible");
+                const query::ParsedQuery parsed = query::parse_query(split_words(req.body));
+                if (parsed.catalog_id.empty()) {
+                    fail(422, "la referencia directa solo acepta C1 a C14");
+                } else {
+                    const auto wait_start = Clock::now();
+                    std::lock_guard<std::mutex> lock(work_mutex);
+                    record.queue_seconds = seconds_since(wait_start);
+                    const DirectReply direct = direct_runner(parsed);
+                    if (direct.json.size() > kMaxResponseBytes) {
+                        fail(413, "resultado SQL demasiado grande para el limite de respuesta");
+                    } else {
+                        res.status = 200;
+                        res.set_content(direct.json, "application/json; charset=utf-8");
+                        record.status = 200;
+                        record.note = "SQL directo SIN verificar: " + std::to_string(direct.rows) + " filas";
+                        record.generation_seconds = direct.sql_seconds;
+                        record.encoding_seconds = direct.encoding_seconds;
+                    }
+                }
+            } catch (const query::QueryError& e) {
+                fail(400, std::string("consulta mal escrita: ") + e.what());
+            } catch (const std::exception& e) {
+                fail(500, std::string("fallo SQL directo: ") + e.what());
+            }
+        }
+        record.bytes = res.body.size();
+        record.seconds = seconds_since(start);
+        if (record.status == 200) {
+            res.set_header("X-TT-Direct-Sql-Seconds", metric_text(record.generation_seconds));
+            res.set_header("X-TT-Direct-Encoding-Seconds", metric_text(record.encoding_seconds));
+            res.set_header("X-TT-Direct-Queue-Seconds", metric_text(record.queue_seconds));
+            res.set_header("X-TT-Direct-Handler-Seconds", metric_text(record.seconds));
+        }
         log(record);
     }
 
@@ -153,7 +254,8 @@ struct ProverServer::Impl {
  * Implementacion: configura limites, hilos y rutas; el puerto se abre en
  * bind().
  */
-ProverServer::ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger)
+ProverServer::ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger,
+                           DirectRunner direct_runner)
     : impl_(std::make_unique<Impl>()) {
     if (context.database == nullptr || context.digest == nullptr) {
         throw std::invalid_argument("el servidor del probador necesita delta y D~ cargados");
@@ -161,6 +263,7 @@ ProverServer::ProverServer(query::ProverContext context, ServerOptions options, 
     impl_->context = context;
     impl_->options = std::move(options);
     impl_->logger = std::move(logger);
+    impl_->direct_runner = std::move(direct_runner);
 
     HealthInfo info;
     info.state_id = context.digest->id();
@@ -178,6 +281,7 @@ ProverServer::ProverServer(query::ProverContext context, ServerOptions options, 
 
     Impl* impl = impl_.get();
     svr.Post(kQueryPath, [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_query(req, res); });
+    svr.Post(kDirectPath, [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_direct(req, res); });
     svr.Get(kHealthPath,
             [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_health(req, res); });
     svr.set_error_handler([impl](const httplib::Request& req, httplib::Response& res) { impl->handle_error(req, res); });

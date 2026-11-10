@@ -31,6 +31,7 @@ tt_add_test(sum_join_c14_test)
 tt_add_test(service_test)
 tt_add_test(net_test)
 target_link_libraries(net_test PRIVATE tt_net)
+target_include_directories(net_test SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/cpp-httplib)
 tt_add_test(ui_test)
 target_link_libraries(ui_test PRIVATE tt_ui tt_net)
 # La prueba usa el cliente HTTP de cpp-httplib para hablar con la interfaz.
@@ -92,3 +93,11 @@ add_test(NAME verifier_ui_requires_delta COMMAND tt_verifier ui --delta ${CMAKE_
 set_tests_properties(verifier_ui_requires_delta PROPERTIES PASS_REGULAR_EXPRESSION "no existe el digest")
 add_test(NAME verifier_ui_requires_delta_exit COMMAND tt_verifier ui --delta ${CMAKE_CURRENT_BINARY_DIR}/no_delta.txt)
 set_tests_properties(verifier_ui_requires_delta_exit PROPERTIES WILL_FAIL TRUE)
+
+# Pruebas de la interfaz JavaScript sin navegador ni dependencias de npm.
+# Node.js es opcional: si no esta instalado, las pruebas C++ siguen igual.
+find_program(TT_NODE_EXECUTABLE node)
+if(TT_NODE_EXECUTABLE)
+  add_test(NAME ui_metrics_js
+           COMMAND ${TT_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/ui_metrics_test.js)
+endif()

@@ -46,6 +46,12 @@ docs/red.md               separación de los módulos y comunicación por red
 docs/interfaz.md          interfaz del caso de estudio y sus decisiones
 docs/contenedores.md      empaquetado en contenedores y sus decisiones
 docs/nube.md              despliegue: base y probador en la nube, cliente local
+docs/comparacion_rendimiento.md  comparación verificable frente a SQL directo
+docs/experimentos_pareados.md   series de medición desde el navegador
+docs/medicion_etapas.md        desglose de costos AIT, Merkle y ASO
+docs/protocolo_experimental.md control del entorno y metodología experimental
+docs/pruebas_seguridad_2vm.md  protocolo de pruebas de seguridad S01–S09
+docs/escalabilidad_2vm.md      escenarios de 1,000 y 2,000 alumnos
 ```
 
 Los datos incluyen 5 carreras (ISC, IIA, LCD, ITI, ICS), cada una con su
@@ -213,6 +219,13 @@ vistas:
   separado.
 - **Catálogo de consultas:** las 14 consultas con sus parámetros.
 
+La página muestra el desglose de tiempos en C++ (generación, codificación,
+cola, manejo HTTP y Verify), tiempo del cliente y sobrecarga de red/HTTP
+**estimada**. El registro local de mediciones se exporta a CSV desde
+**Exportar CSV**; no incluye filas del resultado y se pierde al recargar la
+página. Las cabeceras de tiempos del probador son informativas, no
+pruebas autenticadas. Detalles en `docs/interfaz.md`.
+
 La página no verifica nada: lo hace `tt_verifier` con δ y la clave
 pública, y la página solo muestra el veredicto. Detalles y decisiones en
 `docs/interfaz.md`.
@@ -313,7 +326,7 @@ algo falla, están en `academic_records_db/tools/USAGE.txt`.
 ## Conexión
 
 ```
-host:           127.0.0.1   (desde la VM; más adelante "db" desde otros contenedores)
+host:           127.0.0.1   (desde el anfitrión; "db" desde otros contenedores)
 puerto:         3306
 base de datos:  academic_db
 usuario:        app_user
@@ -326,16 +339,17 @@ Revisión rápida:
 docker exec -it tt_db mysql -uapp_user -papp_pass_2026 academic_db -e "SELECT COUNT(*) FROM student; SELECT COUNT(*) FROM academic_record;"
 ```
 
-## Cambiar el tamaño de los datos
+## Escenarios de tamaño de la base
 
-Por defecto son 500 alumnos. Para usar 1000 (o 2000 con `--size large`):
+El conjunto de datos por defecto contiene 500 alumnos. Los escenarios de
+1,000 y 2,000 alumnos utilizan datos, volúmenes, claves y estados autenticados
+separados, sin reemplazar el conjunto original. Los pasos están en
+[docs/escalabilidad_2vm.md](docs/escalabilidad_2vm.md).
 
-```bash
-python3 academic_records_db/tools/generate_synthetic_data.py --size medium --data-only --output academic_records_db/init/02_seed_data.sql
-docker compose down -v && docker compose up -d db
-```
+No ejecutar `docker compose down -v` sobre un escenario que se desea
+conservar: elimina sus volúmenes de datos.
 
-## C7: rango multidimensional con interseccion ASO (octubre 2026)
+## C7: rango multidimensional con interseccion ASO
 
 El comando siguiente implementa el **capitulo 6.5.1** y la **tabla 7.15**:
 
@@ -346,11 +360,12 @@ cmake -S . -B build
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
 
-./build/prover/tt_prover answer C7 6 8 20221 20222 --keys keys --out respuesta_c7.bin
-./build/verifier/tt_verifier verify C7 6 8 20221 20222 --response respuesta_c7.bin
+./build/prover/tt_prover answer C7 6 8 20241 20242 --keys keys --out respuesta_c7.bin
+./build/verifier/tt_verifier verify C7 6 8 20241 20242 --response respuesta_c7.bin
 ```
 
-Sobre la base pequeña del reporte con semilla 42, se esperan **1 373 filas**.
+Con los datos sintéticos de 500 alumnos y semilla 42, esta consulta devuelve
+**2,034 filas**.
 **No** es suficiente verificar únicamente que la respuesta cumple el predicado: el
 verificador valida las dos pruebas RangeCover y la prueba criptográfica de
 intersección; si se omite alguna fila, los complementos comparten un ID y la

@@ -6,6 +6,7 @@
 // Ctrl+C o con SIGTERM (por ejemplo, 'docker stop').
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "tt/cli/cli.hpp"
 #include "tt/crypto/hash.hpp"
 #include "tt/mysql/connection.hpp"
+#include "tt/mysql/direct_query.hpp"
 #include "tt/mysql/row_store.hpp"
 #include "tt/net/prover_server.hpp"
 #include "tt/net/protocol.hpp"
@@ -92,9 +94,19 @@ ServeOptions parse_serve_options(const std::vector<std::string>& args) {
 void log_request(const net::RequestRecord& r) {
     if (r.path == net::kHealthPath && r.status == 200) return;
     const bool query = r.method == "POST" && r.path == net::kQueryPath;
-    const std::string what = query ? "\"" + r.query + "\"" : r.method + " " + r.path;
+    const bool direct = r.method == "POST" && r.path == net::kDirectPath;
+    const std::string what = query || direct ? "\"" + r.query + "\"" : r.method + " " + r.path;
     std::printf("[prover] %s %s -> %d (%s) en %.2f s: %s\n", r.client.c_str(), what.c_str(), r.status,
                 cli::size_text(r.bytes).c_str(), r.seconds, r.note.c_str());
+    if (query && r.status == 200) {
+        std::printf("[prover] tiempos: generacion %.6f s, codificacion %.6f s, espera %.6f s, "
+                    "manejo HTTP %.6f s (sin transferencia TCP)\n",
+                    r.generation_seconds, r.encoding_seconds, r.queue_seconds, r.seconds);
+    }
+    if (direct && r.status == 200) {
+        std::printf("[prover] SQL directo: consulta y lectura %.6f s, JSON %.6f s\n",
+                    r.generation_seconds, r.encoding_seconds);
+    }
     if (r.stale_rows > 0) {
         std::fprintf(stderr,
                      "[prover] AVISO: %zu fila(s) de la base ya no son las que se autenticaron en Setup; el\n"
@@ -191,7 +203,25 @@ int run_serve(const std::vector<std::string>& args) {
     // hereden bloqueadas y solo el hilo vigilante las reciba.
     cli::block_stop_signals();
 
-    net::ProverServer server(context, opt.server, log_request);
+    // El comparativo SQL no forma parte del protocolo de verificacion:
+    // solo se habilita expresamente para un entorno de pruebas controlado.
+    net::ServerOptions server_options = opt.server;
+    const char* benchmark_env = std::getenv("TT_ENABLE_DIRECT_BENCH");
+    server_options.direct_benchmark = benchmark_env != nullptr && std::string(benchmark_env) == "1";
+    net::DirectRunner direct_runner;
+    if (server_options.direct_benchmark) {
+        direct_runner = [&db_config, &state](const query::ParsedQuery& query) {
+            const mysql::DirectSqlResult result = mysql::run_direct_query(db_config, state.digest, query);
+            net::DirectReply reply;
+            reply.json = result.json;
+            reply.rows = result.rows;
+            reply.sql_seconds = result.sql_seconds;
+            reply.encoding_seconds = result.encoding_seconds;
+            return reply;
+        };
+        std::printf("[prover] referencia SQL directa habilitada solo para pruebas (SIN verificar)\n");
+    }
+    net::ProverServer server(context, server_options, log_request, direct_runner);
     const int port = server.bind();
     std::printf("[prover] escuchando en %s:%d (POST %s, GET %s); Ctrl+C para detener\n", opt.server.host.c_str(), port,
                 net::kQueryPath, net::kHealthPath);

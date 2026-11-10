@@ -2,6 +2,8 @@
 
 #include "tt/query/prover_service.hpp"
 
+#include <chrono>
+#include <utility>
 #include <string>
 
 #include "tt/query/average.hpp"
@@ -13,6 +15,7 @@
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
 #include "tt/query/sum_join_course.hpp"
+#include "stage_metrics.hpp"
 
 namespace tt::query {
 
@@ -36,16 +39,32 @@ const aso::PublicKey& public_key_for(const ProverContext& context, const ParsedQ
     return *context.public_key;
 }
 
-/*
- * Devuelve el origen de filas del contexto o explica por que falta.
- *
- * Errores:
- *   Lanza ProverError si el probador no tiene acceso a la base D.
- */
-db::RowStore& store_for(const ProverContext& context) {
-    if (context.store == nullptr) throw ProverError("el probador no tiene acceso a la base D para leer filas");
-    return *context.store;
-}
+// Mide el tiempo de lectura de filas sin cambiar el contrato RowStore ni
+// introducir dependencias de MySQL en el nucleo criptografico.
+class TimedRowStore final : public db::RowStore {
+public:
+    explicit TimedRowStore(db::RowStore* source) : source_(source) {}
+
+    std::vector<db::Row> fetch_rows(const db::TableSchema& schema,
+                                    const std::vector<std::int64_t>& references) override {
+        if (source_ == nullptr) throw ProverError("el probador no tiene acceso a la base D para leer filas");
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<db::Row> rows = source_->fetch_rows(schema, references);
+        seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        ++calls;
+        count += rows.size();
+        return rows;
+    }
+
+    std::string description() const override { return source_ ? source_->description() : "origen no disponible"; }
+
+    double seconds = 0;
+    std::size_t calls = 0;
+    std::size_t count = 0;
+
+private:
+    db::RowStore* source_ = nullptr;
+};
 
 }  // namespace
 
@@ -76,11 +95,27 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
     const scheme::AuthenticatedDatabase& adb = *context.database;
     const scheme::DatabaseDigest& digest = *context.digest;
     ProverReply reply;
+    TimedRowStore rows(context.store);
+    const QueryKind kind = query_kind(query);
+    const bool profile = kind == QueryKind::kJoinCourse || kind == QueryKind::kJoinProgram ||
+                         kind == QueryKind::kSumJoinCourse;
+    metrics::Totals measured;
+    metrics::Capture capture(measured, profile);
+    using Clock = std::chrono::steady_clock;
+    const auto generation_start = Clock::now();
+    // Cierra la medicion de ProofGen e inicia la de codificacion. Cada
+    // variante conserva el mismo formato TTRSP que devolvia anteriormente.
+    auto encode = [&](auto&& encoder) {
+        reply.generation_seconds = std::chrono::duration<double>(Clock::now() - generation_start).count();
+        const auto encoding_start = Clock::now();
+        reply.bytes = encoder();
+        reply.encoding_seconds = std::chrono::duration<double>(Clock::now() - encoding_start).count();
+    };
 
     switch (query_kind(query)) {
         case QueryKind::kSelection: {
-            const SelectionAnswer answer = answer_selection(adb, digest, query.query, store_for(context));
-            reply.bytes = encode_response(answer.response);
+            const SelectionAnswer answer = answer_selection(adb, digest, query.query, rows);
+            encode([&] { return encode_response(answer.response); });
             reply.stale_rows = answer.stale_rows;
             reply.summary = "AIT " + answer.tree.label() + ": " + std::to_string(answer.response.rows.size()) +
                             " filas; prueba de " + std::to_string(answer.response.range.entries.size()) + " nodos";
@@ -88,8 +123,8 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kMultiRange: {
             const MultiRangeAnswer answer =
-                answer_multirange(adb, digest, public_key_for(context, query), *query.multi, store_for(context));
-            reply.bytes = encode_multirange_response(answer.response);
+                answer_multirange(adb, digest, public_key_for(context, query), *query.multi, rows);
+            encode([&] { return encode_multirange_response(answer.response); });
             reply.stale_rows = answer.stale_rows;
             reply.summary = "AIT " + answer.trees[0].label() + " con " + std::to_string(answer.input_counts[0]) +
                             " referencias y AIT " + answer.trees[1].label() + " con " +
@@ -99,8 +134,8 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kJoinCourse: {
             const JoinCourseAnswer answer =
-                answer_join_course(adb, digest, public_key_for(context, query), store_for(context));
-            reply.bytes = encode_join_course_response(answer.response);
+                answer_join_course(adb, digest, public_key_for(context, query), rows);
+            encode([&] { return encode_join_course_response(answer.response); });
             reply.stale_rows = answer.stale_rows;
             reply.summary = std::to_string(answer.response.record_rows.size()) + " registros y " +
                             std::to_string(answer.response.course_rows.size()) + " unidades de aprendizaje";
@@ -108,8 +143,8 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kJoinProgram: {
             const JoinProgramAnswer answer =
-                answer_join_program(adb, digest, public_key_for(context, query), store_for(context));
-            reply.bytes = encode_join_program_response(answer.response);
+                answer_join_program(adb, digest, public_key_for(context, query), rows);
+            encode([&] { return encode_join_program_response(answer.response); });
             reply.stale_rows = answer.stale_rows;
             reply.summary = std::to_string(answer.response.student_rows.size()) + " alumnos y " +
                             std::to_string(answer.response.program_rows.size()) + " programas";
@@ -118,7 +153,7 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         case QueryKind::kAverage: {
             const AverageResponse response =
                 answer_average(adb, digest, public_key_for(context, query), *query.avg_student);
-            reply.bytes = encode_average_response(response);
+            encode([&] { return encode_average_response(response); });
             reply.summary = response.count == 0 ? std::string("alumno sin registros (AVG = NULL)")
                                                 : "SUM " + std::to_string(response.sum) + " y COUNT " +
                                                       std::to_string(response.count) + "; sin leer filas de D";
@@ -126,7 +161,7 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kCount: {
             const CountAnswer answer = answer_count(adb, digest, public_key_for(context, query), *query.count);
-            reply.bytes = encode_count_response(answer.response);
+            encode([&] { return encode_count_response(answer.response); });
             reply.summary = "COUNT " + std::to_string(answer.response.count) + " a partir de " +
                             std::to_string(answer.input_counts[0]) + " y " + std::to_string(answer.input_counts[1]) +
                             " referencias; sin leer filas de D";
@@ -134,8 +169,8 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kMinimum: {
             const MinimumAnswer answer =
-                answer_minimum(adb, digest, public_key_for(context, query), *query.min_student, store_for(context));
-            reply.bytes = encode_multirange_response(answer.range_answer.response);
+                answer_minimum(adb, digest, public_key_for(context, query), *query.min_student, rows);
+            encode([&] { return encode_multirange_response(answer.range_answer.response); });
             reply.stale_rows = answer.range_answer.stale_rows;
             reply.summary = answer.minimum ? "MIN " + std::to_string(*answer.minimum) + " con " +
                                                  std::to_string(answer.range_answer.response.rows.size()) +
@@ -145,14 +180,23 @@ ProverReply answer_query(const ProverContext& context, const ParsedQuery& query)
         }
         case QueryKind::kSumJoinCourse: {
             const SumJoinCourseAnswer answer = answer_sum_join_course(
-                adb, digest, public_key_for(context, query), *query.sum_credits_student, store_for(context));
-            reply.bytes = encode_sum_join_course_response(answer.response);
+                adb, digest, public_key_for(context, query), *query.sum_credits_student, rows);
+            encode([&] { return encode_sum_join_course_response(answer.response); });
             reply.stale_rows = answer.stale_rows;
             reply.summary = std::to_string(answer.response.filtered.rows.size()) + " registros aprobados y " +
                             std::to_string(answer.response.course_rows.size()) + " unidades de aprendizaje";
             break;
         }
     }
+    reply.detailed_stages = profile;
+    if (reply.detailed_stages) {
+        reply.ait_seconds = measured.ait_seconds;
+        reply.merkle_seconds = measured.merkle_seconds;
+        reply.aso_seconds = measured.aso_seconds;
+    }
+    reply.row_fetch_seconds = rows.seconds;
+    reply.row_fetch_calls = rows.calls;
+    reply.row_fetch_rows = rows.count;
     return reply;
 }
 

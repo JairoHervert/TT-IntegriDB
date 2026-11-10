@@ -66,6 +66,8 @@ services:
       TT_DB_NAME: academic_db
       # Sin valor: Compose la copia de la terminal (export TT_DB_PASS=...).
       TT_DB_PASS:
+      # Modo experimental, deshabilitado por defecto. No usar en produccion.
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
     volumes:
       # delta, D~ y pk que preparo 'tt_owner publish' en la computadora del
       # propietario y se copiaron aqui (solo lectura).

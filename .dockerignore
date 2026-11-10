@@ -35,3 +35,6 @@ academic_records_db/
 .idea/
 *.swp
 comands_for_me.txt
+
+# Escenarios de escalabilidad (datos y claves del propietario).
+bench_data/

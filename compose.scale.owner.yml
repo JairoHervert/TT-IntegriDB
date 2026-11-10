@@ -1,0 +1,29 @@
+# Base de datos aislada para ejecutar Setup en la VM del propietario.
+# No cambia ni elimina el volumen utilizado para los 500 alumnos.
+name: tt-scale-owner-${TT_SCALE:-1000}
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${TT_DB_ROOT_PASS:-root_tt_2026}
+      MYSQL_DATABASE: academic_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: ${TT_DB_PASS:?Configura TT_DB_PASS}
+      TZ: America/Mexico_City
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./bench_data/${TT_SCALE:-1000}/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${TT_DB_ROOT_PASS:-root_tt_2026}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mysql_data:

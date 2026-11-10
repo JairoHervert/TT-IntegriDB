@@ -6,7 +6,8 @@
 //   POST /v1/query    cuerpo: la consulta en texto, igual que en la linea de
 //                     comandos (por ejemplo "C4 6 8").
 //                     200: el cuerpo es la respuesta (R, pi) en formato
-//                          TTRSP (application/octet-stream).
+//                          TTRSP (application/octet-stream); opcionalmente
+//                          cabeceras X-TT-* con tiempos no autenticados.
 //                     400: la consulta esta mal escrita.
 //                     413: la consulta es demasiado larga.
 //                     422: la consulta no esta soportada por el estado
@@ -41,6 +42,8 @@ inline constexpr int kDefaultPort = 7070;
 
 // Rutas del protocolo (version 1).
 inline constexpr const char* kQueryPath = "/v1/query";
+// Ruta experimental optativa: SQL directo, SIN verificacion de integridad.
+inline constexpr const char* kDirectPath = "/v1/direct";
 inline constexpr const char* kHealthPath = "/v1/health";
 
 // Tamano maximo del texto de una consulta. La consulta mas larga del

@@ -2,6 +2,7 @@
 
 #include "tt/query/verifier_service.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <exception>
@@ -17,6 +18,7 @@
 #include "tt/query/response_io.hpp"
 #include "tt/query/selection.hpp"
 #include "tt/query/sum_join_course.hpp"
+#include "stage_metrics.hpp"
 
 namespace tt::query {
 
@@ -305,6 +307,11 @@ VerifierOutcome verify_query(const scheme::DatabaseDigest& digest, const aso::Pu
                              const VerifyOptions& options) {
     VerifierOutcome out;
     const Clock::time_point start = Clock::now();
+    const QueryKind kind = query_kind(query);
+    const bool profile = kind == QueryKind::kJoinCourse || kind == QueryKind::kJoinProgram ||
+                         kind == QueryKind::kSumJoinCourse;
+    metrics::Totals measured;
+    metrics::Capture capture(measured, profile);
     try {
         verify_by_kind(digest, public_key, query, bytes, options, out);
     } catch (const ResponseFormatError& e) {
@@ -313,6 +320,15 @@ VerifierOutcome verify_query(const scheme::DatabaseDigest& digest, const aso::Pu
         reject(out, std::string("la respuesta no se pudo revisar: ") + e.what());
     }
     out.seconds = seconds_since(start);
+    if (profile) {
+        // No se confunde la decodificacion, el JOIN local ni la conversion
+        // del resultado con tiempo criptografico puro.
+        const double accounted = measured.ait_seconds + measured.merkle_seconds + measured.aso_seconds;
+        out.stages = {{"AIT (operaciones instrumentadas)", measured.ait_seconds},
+                      {"Merkle (hash e inclusion)", measured.merkle_seconds},
+                      {"ASO (Split y Bezout)", measured.aso_seconds},
+                      {"Otros costos de Verify", std::max(0.0, out.seconds - accounted)}};
+    }
     return out;
 }
 

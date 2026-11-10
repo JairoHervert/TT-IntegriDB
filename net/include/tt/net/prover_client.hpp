@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -47,6 +48,57 @@ struct ClientOptions {
     int read_timeout_seconds = 600;                // para esperar cada lectura de la respuesta
     std::size_t max_response_bytes = kMaxResponseBytes;  // respuesta mas grande que se acepta
 };
+
+// Tiempos que declara el probador mediante cabeceras HTTP. Son metadatos
+// no autenticados: nunca se utilizan para decidir el resultado de Verify.
+struct ServerTimings {
+    double generation_seconds = 0;  // ProofGen, incluidas lecturas de D
+    double encoding_seconds = 0;    // codificacion TTRSP
+    double queue_seconds = 0;       // espera del candado en el servidor
+    double handler_seconds = 0;     // manejo de la peticion, sin envio TCP
+    std::optional<double> row_fetch_seconds;  // tiempo de lectura de filas de D
+    // Las tres medidas se publican juntas; ausentes en consultas no instrumentadas.
+    std::optional<double> ait_seconds;
+    std::optional<double> merkle_seconds;
+    std::optional<double> aso_seconds;
+};
+
+// Respuesta de una peticion medida desde el verificador. Si las cabeceras
+// faltan o estan mal formadas, se conservan los bytes y se omiten los tiempos
+// de servidor: solamente Verify puede aceptar o rechazar la respuesta.
+// Metricas de la ruta experimental: tampoco se autentican criptograficamente.
+struct DirectServerTimings {
+    double sql_seconds = 0;
+    double encoding_seconds = 0;
+    double queue_seconds = 0;
+    double handler_seconds = 0;
+};
+
+struct MeasuredDirect {
+    std::string json;  // contenido SQL no verificado (JSON del servidor)
+    double roundtrip_seconds = 0;
+    std::optional<DirectServerTimings> server_timings;
+};
+
+/*
+ * Solicita al servidor la referencia SQL directa, sin ejecutar Verify.
+ * Solo se utiliza en la modalidad de evaluacion habilitada expresamente.
+ */
+MeasuredDirect fetch_direct_measured(const Endpoint& endpoint, const std::string& query_text,
+                                     const ClientOptions& options = {});
+
+struct MeasuredAnswer {
+    std::vector<unsigned char> bytes;
+    double roundtrip_seconds = 0;  // POST visto por el verificador
+    std::optional<ServerTimings> server_timings;
+};
+
+/*
+ * Envia la consulta y devuelve los bytes TTRSP con las mediciones disponibles.
+ * El tiempo de ida y vuelta incluye conexion, servidor y transferencia.
+ */
+MeasuredAnswer fetch_answer_measured(const Endpoint& endpoint, const std::string& query_text,
+                                     const ClientOptions& options = {});
 
 /*
  * Envia la consulta al probador (POST /v1/query) y devuelve los bytes de la

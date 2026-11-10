@@ -12,6 +12,7 @@
 #include "tt/crypto/pairing_group.hpp"
 #include "tt/db/row_hash.hpp"
 #include "tt/merkle/tree.hpp"
+#include "stage_metrics.hpp"
 
 namespace tt::query {
 namespace {
@@ -107,7 +108,7 @@ SumJoinCourseAnswer answer_sum_join_course(const scheme::AuthenticatedDatabase& 
     std::unordered_set<std::int64_t> wanted;
     for (const auto& record : response.filtered.rows)
         wanted.insert(std::get<std::int64_t>(record.row.at(*record_key_col)));
-    const auto all = tree->range(kLo, kHi);
+    const auto all = metrics::measure(metrics::Stage::kAit, [&] { return tree->range(kLo, kHi); });
     response.course_range = all.proof;
     std::vector<std::int64_t> matching;
     std::unordered_set<std::int64_t> unmatched;
@@ -123,13 +124,17 @@ SumJoinCourseAnswer answer_sum_join_course(const scheme::AuthenticatedDatabase& 
         const auto key = std::get<std::int64_t>(rows[i].at(*course_key_col));
         const auto pos = course->position_of(key);
         if (!pos) throw ProverError("C14: course no autenticado en D~");
-        if (db::row_hash(course->schema, rows[i]) != course->rows.leaves().at(*pos)) ++out.stale_rows;
-        response.course_rows.push_back({rows[i], course->rows.prove(*pos)});
+        metrics::measure(metrics::Stage::kMerkle, [&] {
+            if (db::row_hash(course->schema, rows[i]) != course->rows.leaves().at(*pos)) ++out.stale_rows;
+            response.course_rows.push_back({rows[i], course->rows.prove(*pos)});
+        });
     }
     // Split demuestra que cursos_publicados + resto = AIT_course.
     // Bezout(resto_course, claves_filtradas_distintas) impide ocultar un JOIN.
-    response.course_complement = aso::prove_split(keys_to_field(unmatched), pk);
-    response.no_missing_courses = aso::prove_disjoint(keys_to_field(unmatched), keys_to_field(wanted), pk);
+    metrics::measure(metrics::Stage::kAso, [&] {
+        response.course_complement = aso::prove_split(keys_to_field(unmatched), pk);
+        response.no_missing_courses = aso::prove_disjoint(keys_to_field(unmatched), keys_to_field(wanted), pk);
+    });
     return out;
 }
 
@@ -161,7 +166,9 @@ SumJoinCourseVerification verify_sum_join_course(const scheme::DatabaseDigest& d
         std::unordered_set<std::int64_t> requested;
         for (const auto& row : check_filter.rows)
             requested.insert(std::get<std::int64_t>(row.at(*record_key_col)));
-        const auto range = ait::verify_range(tree->root, kLo, kHi, response.course_range);
+        const auto range = metrics::measure(metrics::Stage::kAit, [&] {
+            return ait::verify_range(tree->root, kLo, kHi, response.course_range);
+        });
         if (!range.accepted) throw std::runtime_error("C14: AIT course invalido: " + range.reason);
         if (range.count != course->row_count)
             throw std::runtime_error("C14: cantidad de course distinta del AIT");
@@ -181,20 +188,29 @@ SumJoinCourseVerification verify_sum_join_course(const scheme::DatabaseDigest& d
             const auto key = std::get<std::int64_t>(row.at(*course_key_col));
             if (!seen_refs.insert(key).second || !requested.count(key))
                 throw std::runtime_error("C14: materia duplicada o no solicitada");
-            if (!merkle::verify_inclusion(course->rows_root, course->row_count,
-                                          db::row_hash(course->schema, row), proof.inclusion))
+            const bool inclusion_ok = metrics::measure(metrics::Stage::kMerkle, [&] {
+                return merkle::verify_inclusion(course->rows_root, course->row_count,
+                                                db::row_hash(course->schema, row), proof.inclusion);
+            });
+            if (!inclusion_ok)
                 throw std::runtime_error("C14: Merkle course invalido");
             course_credits.emplace(key, std::get<std::int64_t>(row.at(*credit_col)));
         }
         if (course_credits.size() > range.count)
             throw std::runtime_error("C14: mas materias que course autenticado");
-        if (!aso::verify_split(whole.rest_g1, keys_to_field(seen_refs), response.course_complement, pk))
+        const bool split_ok = metrics::measure(metrics::Stage::kAso, [&] {
+            return aso::verify_split(whole.rest_g1, keys_to_field(seen_refs), response.course_complement, pk);
+        });
+        if (!split_ok)
             throw std::runtime_error("C14: Split ASO course invalido");
         // El conjunto completo de claves filtradas es conocido y autenticado
         // gracias a C7. Sus multiplicidades no afectan a la coprimalidad.
-        const auto& group = crypto::init_pairing_group();
-        const aso::SplitWitness left{aso::accumulate_g1(keys_to_field(requested), pk), group.g2};
-        if (!aso::verify_disjoint(response.course_complement, left, response.no_missing_courses))
+        const bool disjoint_ok = metrics::measure(metrics::Stage::kAso, [&] {
+            const auto& group = crypto::init_pairing_group();
+            const aso::SplitWitness left{aso::accumulate_g1(keys_to_field(requested), pk), group.g2};
+            return aso::verify_disjoint(response.course_complement, left, response.no_missing_courses);
+        });
+        if (!disjoint_ok)
             throw std::runtime_error("C14: Bezout invalido; faltan materias coincidentes");
 
         std::int64_t sum = 0;

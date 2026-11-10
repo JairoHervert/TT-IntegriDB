@@ -63,6 +63,7 @@ struct UiServer::Impl {
     static void reply(httplib::Response& res, const ApiReply& r) {
         res.status = r.status;
         res.set_content(r.body, "application/json; charset=utf-8");
+        for (const auto& field : r.headers) res.set_header(field.first, field.second);
     }
 
     /*
@@ -131,6 +132,9 @@ UiServer::UiServer(Portal& portal, UiServerOptions options, HttpErrorLogger erro
     });
     svr.Post("/api/query", [impl](const httplib::Request& req, httplib::Response& res) {
         Impl::reply(res, impl->portal->query(req.body));
+    });
+    svr.Post("/api/direct", [impl](const httplib::Request& req, httplib::Response& res) {
+        Impl::reply(res, impl->portal->direct(req.body));
     });
 
     // Errores que no vienen de una ruta (404, 405, 413...): JSON para las

@@ -1,0 +1,17 @@
+# Verificador experimental aislado; interfaz en 127.0.0.1:8081.
+# No reemplaza ni modifica el verificador original de 500 alumnos.
+name: tt-scale-client-${TT_SCALE:-1000}
+
+services:
+  verifier:
+    build:
+      context: .
+      target: verifier
+    image: tt-integridb/verifier
+    environment:
+      TT_PROVER_ADDR: ${TT_PROVER_ADDR:?Configura TT_PROVER_ADDR}
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
+    volumes:
+      - ./bench_data/${TT_SCALE:-1000}/deploy/verifier:/srv/tt/verifier:ro
+    ports:
+      - "127.0.0.1:8081:8080"

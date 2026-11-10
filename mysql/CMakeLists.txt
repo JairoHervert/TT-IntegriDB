@@ -16,6 +16,7 @@ add_library(tt_mysql STATIC
   src/connection.cpp
   src/database_source.cpp
   src/row_store.cpp
+  src/direct_query.cpp
 )
 
 target_include_directories(tt_mysql PUBLIC include PRIVATE ${MYSQL_INCLUDE_DIR})

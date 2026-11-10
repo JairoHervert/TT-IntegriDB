@@ -185,8 +185,9 @@ hace su implementación ("as we do in our implementation").
 - **δ en texto, con id y versión.** Es pequeño y legible (se puede mostrar
   en la presentación). Al leerlo se recalcula el `id` y se compara; si
   alguien edita el archivo, se rechaza. `state_version` empieza en 1 y
-  aumentará con cada INSERT/DELETE, para que el cliente sepa si tiene el
-  digest vigente (RNF08).
+  no cambia automáticamente cuando se modifica la base. La actualización
+  incremental del estado autenticado tras INSERT/DELETE no está implementada
+  y permanece pendiente en la sección 7.17 del reporte.
 - **Huella de la clave pública en δ.** Hash de toda `pk`; el verificador
   comprueba que tiene la misma `pk` con la que se construyó el estado.
 - **Lectura consistente de MySQL.** Toda la base se lee dentro de
@@ -200,22 +201,16 @@ hace su implementación ("as we do in our implementation").
 - **Contraseña de MySQL solo por variable de entorno** (`TT_DB_PASS`), para
   no dejarla escrita en el código.
 
-## Lo que queda para las siguientes etapas
+## Relación de Setup con ProofGen y Verify
 
-- **Consultas y verificación.** Este paso construye el estado autenticado;
-  la generación de pruebas (ProofGen) y la verificación (Verify) de cada
-  tipo de consulta del catálogo son el siguiente paso.
-- **Valores dentro de D~.** Los valores de las hojas de cada AIT y la lista
-  de referencias de cada tabla no están cubiertos por las raíces de δ. En
-  el esquema los valores los compromete el acumulador de cada hoja, y el
-  verificador los revisa con el ASO; las filas las revisa cada prueba de
-  Merkle. Por eso el probador debe tomar filas y valores de la base D.
+El estado generado por Setup se utiliza en la generación y verificación de
+las consultas C1–C14. Los valores de las hojas de cada AIT y la lista de
+referencias de cada tabla no están cubiertos directamente por las raíces
+de δ. Los valores se comprometen mediante los acumuladores correspondientes;
+las filas obtenidas de la base D se comprueban con pruebas de Merkle. Esta
+separación permite detectar cambios en MySQL posteriores al estado autenticado.
 
-## Para actualizar en el reporte
-
-- En "Inicialización del esquema", el δ de la implementación contiene la
-  raíz de Merkle de cada tabla en lugar de los `h_r` de cada fila (la
-  reducción que el mismo reporte menciona).
-- El plan `queries` concreta la frase "esta construcción podría ajustarse
-  para generar únicamente las estructuras necesarias"; la tabla del
-  catálogo de arriba puede ir al reporte tal cual.
+En la implementación actual, δ contiene la raíz de Merkle de cada tabla
+en lugar de un hash por fila. El plan `queries` genera únicamente los AIT
+necesarios para las consultas C1–C14; el plan `full` permite construir el
+conjunto completo de árboles del esquema.

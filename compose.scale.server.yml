@@ -1,0 +1,55 @@
+# Servidor aislado para el escenario de escalabilidad indicado por TT_SCALE.
+# Mantiene intactos los contenedores y volúmenes de 500 alumnos.
+name: tt-scale-server-${TT_SCALE:-1000}
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${TT_DB_ROOT_PASS:-root_tt_2026}
+      MYSQL_DATABASE: academic_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: ${TT_DB_PASS:?Configura TT_DB_PASS}
+      TZ: America/Mexico_City
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./bench_data/${TT_SCALE:-1000}/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${TT_DB_ROOT_PASS:-root_tt_2026}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  prover:
+    build:
+      context: .
+      target: prover
+    image: tt-integridb/prover
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TT_DB_HOST: db
+      TT_DB_PORT: "3306"
+      TT_DB_USER: app_user
+      TT_DB_NAME: academic_db
+      TT_DB_PASS: ${TT_DB_PASS:?Configura TT_DB_PASS}
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
+    volumes:
+      - ./bench_data/${TT_SCALE:-1000}/deploy/prover:/srv/tt/prover:ro
+    ports:
+      # Exponer solo en la interfaz privada de VirtualBox.
+      - "${TT_SCALE_BIND_IP:-192.168.56.102}:${TT_SCALE_PORT:-7071}:7070"
+    networks:
+      - data
+
+networks:
+  data:
+
+volumes:
+  mysql_data:

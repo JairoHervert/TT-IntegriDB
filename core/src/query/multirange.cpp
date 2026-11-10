@@ -12,6 +12,7 @@
 #include "tt/ait/node.hpp"
 #include "tt/crypto/pairing_group.hpp"
 #include "tt/db/row_hash.hpp"
+#include "stage_metrics.hpp"
 
 namespace tt::query {
 namespace {
@@ -154,7 +155,9 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
         ans.trees[k] = selection_tree(queries[k], digest);
         const auto* tree = adb.find_tree(ans.trees[k]);
         if (!tree) throw ProverError("D~ no contiene el AIT " + ans.trees[k].label());
-        ranged[k] = tree->range(queries[k].lo, queries[k].hi);
+        ranged[k] = metrics::measure(metrics::Stage::kAit, [&] {
+            return tree->range(queries[k].lo, queries[k].hi);
+        });
         ans.input_counts[k] = ranged[k].values.size();
         ans.response.ranges[k] = std::move(ranged[k].proof);
     }
@@ -173,8 +176,10 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto position = tab->position_of(common[i]);
         if (!position) throw ProverError("D~ no contiene la fila de la interseccion");
-        if (db::row_hash(tab->schema, rows[i]) != tab->rows.leaves()[*position]) ++ans.stale_rows;
-        response.rows.push_back({std::move(rows[i]), tab->rows.prove(*position)});
+        metrics::measure(metrics::Stage::kMerkle, [&] {
+            if (db::row_hash(tab->schema, rows[i]) != tab->rows.leaves()[*position]) ++ans.stale_rows;
+            response.rows.push_back({std::move(rows[i]), tab->rows.prove(*position)});
+        });
     }
 
     // Para cada nodo autentico se calcula el complemento D = N \ (N interseccion R).
@@ -197,8 +202,10 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
                 if (!common_ids.count(id)) rest.push_back(id);
             }
             offset += count;
-            complements[k].push_back(elements(rest));
-            response.splits[k].push_back(aso::prove_split(complements[k].back(), pk));
+            metrics::measure(metrics::Stage::kAso, [&] {
+                complements[k].push_back(elements(rest));
+                response.splits[k].push_back(aso::prove_split(complements[k].back(), pk));
+            });
         }
         if (offset != ranged[k].values.size()) throw ProverError("AIT: cobertura incompleta");
     }
@@ -206,7 +213,9 @@ MultiRangeAnswer answer_multirange(const scheme::AuthenticatedDatabase& adb,
     // ninguna fila que pertenezca a ambos rangos y no figure en R.
     for (const auto& a : complements[0]) {
         for (const auto& b : complements[1]) {
-            response.disjoint.push_back(aso::prove_disjoint(a, b, pk));
+            metrics::measure(metrics::Stage::kAso, [&] {
+                response.disjoint.push_back(aso::prove_disjoint(a, b, pk));
+            });
         }
     }
     return ans;
@@ -233,7 +242,9 @@ MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
             const auto spec = selection_tree(queries[k], digest);
             const auto* tree = digest.find_tree(spec);
             if (!tree) throw Rejected("falta un AIT autenticado");
-            range[k] = ait::verify_range(tree->root, queries[k].lo, queries[k].hi, response.ranges[k]);
+            range[k] = metrics::measure(metrics::Stage::kAit, [&] {
+                return ait::verify_range(tree->root, queries[k].lo, queries[k].hi, response.ranges[k]);
+            });
             if (!range[k].accepted) throw Rejected("AIT " + spec.label() + ": " + range[k].reason);
             out.cover_nodes[k] = range[k].cover.size();
             if (response.splits[k].size() != range[k].cover.size()) {
@@ -251,10 +262,15 @@ MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
         start = Clock::now();
         std::unordered_set<std::int64_t> seen;
         for (const auto& rp : response.rows) {
-            const crypto::Digest hash = db::row_hash(schema, rp.row);
+            const crypto::Digest hash = metrics::measure(metrics::Stage::kMerkle, [&] {
+                return db::row_hash(schema, rp.row);
+            });
             const std::int64_t id = std::get<std::int64_t>(rp.row[ref]);
             if (id == 0 || !seen.insert(id).second) throw Rejected("referencia repetida o nula");
-            if (!merkle::verify_inclusion(table->rows_root, table->row_count, hash, rp.inclusion)) {
+            const bool inclusion_ok = metrics::measure(metrics::Stage::kMerkle, [&] {
+                return merkle::verify_inclusion(table->rows_root, table->row_count, hash, rp.inclusion);
+            });
+            if (!inclusion_ok) {
                 throw Rejected("fila manipulada o no autenticada por el arbol de Merkle");
             }
             for (int k = 0; k < 2; ++k) {
@@ -276,7 +292,10 @@ MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
                 auto refs = result_in_node(response.rows, cols[k], cover.header, ref);
                 assigned += refs.size();
                 if (refs.size() > cover.header.count) throw Rejected("un nodo tiene mas filas que su contador");
-                if (!aso::verify_split(cover.payload.acc_g1, elements(refs), response.splits[k][i], pk)) {
+                const bool split_ok = metrics::measure(metrics::Stage::kAso, [&] {
+                    return aso::verify_split(cover.payload.acc_g1, elements(refs), response.splits[k][i], pk);
+                });
+                if (!split_ok) {
                     throw Rejected("ASO: el resultado y el complemento no reconstruyen un nodo autenticado");
                 }
             }
@@ -285,7 +304,10 @@ MultiRangeVerification verify_multirange(const scheme::DatabaseDigest& digest,
         std::size_t i = 0;
         for (const auto& a : response.splits[0]) {
             for (const auto& b : response.splits[1]) {
-                if (!aso::verify_disjoint(a, b, response.disjoint[i++])) {
+                const bool disjoint_ok = metrics::measure(metrics::Stage::kAso, [&] {
+                    return aso::verify_disjoint(a, b, response.disjoint[i++]);
+                });
+                if (!disjoint_ok) {
                     throw Rejected("ASO: los complementos comparten identificadores; faltan filas");
                 }
             }

@@ -128,10 +128,9 @@ el rechazo ya estaba cubierto por los Verify de cada tipo.
 
 ### 4. Un servicio único por extremo
 
-Antes, el comando que escribía archivos y un futuro servidor habrían
-repetido la misma cadena de casos, y cualquier diferencia entre ellos sería
-un error difícil de ver. Con `answer_query` y `verify_query`, la red, los
-archivos y la interfaz usan una sola implementación. El verificador
+La generación y verificación se concentran en `answer_query` y
+`verify_query`; así, la red, los archivos y la interfaz utilizan una sola
+implementación y evitan divergencias entre vías de ejecución. El verificador
 también decodifica según la consulta que hizo: si el servidor manda una
 respuesta de otro tipo (por ejemplo, la de C13 cuando se pidió C7), el
 lector la rechaza.
