@@ -1,0 +1,26 @@
+# Despliegue Azure: solo el probador. La base SQL es Azure Database for MySQL
+# Flexible Server (servicio administrado, no un contenedor MySQL).
+# TT_DB_HOST debe ser el FQDN del servidor, no su IP privada.
+name: tt-azure500-prover
+
+services:
+  prover:
+    build:
+      context: .
+      target: prover
+    image: tt-integridb/prover:azure500
+    restart: unless-stopped
+    environment:
+      TT_DB_HOST: ${TT_DB_HOST:?Define el FQDN de Azure Database for MySQL}
+      TT_DB_PORT: "3306"
+      TT_DB_USER: ${TT_DB_USER:?Define el usuario de lectura de Azure MySQL}
+      TT_DB_NAME: academic_db
+      TT_DB_PASS: ${TT_DB_PASS:?Define la contrasena de Azure MySQL}
+      TT_DB_TLS_MODE: VERIFY_IDENTITY
+      TT_DB_TLS_CA: /etc/ssl/certs/ca-certificates.crt
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
+    volumes:
+      - ./deploy/prover:/srv/tt/prover:ro
+    ports:
+      # Solo en la IP privada del probador, nunca en 0.0.0.0.
+      - "${TT_AZURE_PROVER_IP:?Define la IP privada de la VM probador}:7070:7070"

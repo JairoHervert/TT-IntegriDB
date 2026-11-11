@@ -1,0 +1,18 @@
+# Despliegue Azure: verificador separado del probador y del servicio MySQL.
+# Se accede a la interfaz a traves de un tunel SSH hacia esta VM.
+name: tt-azure500-verifier
+
+services:
+  verifier:
+    build:
+      context: .
+      target: verifier
+    image: tt-integridb/verifier:azure500
+    restart: unless-stopped
+    environment:
+      TT_PROVER_ADDR: ${TT_PROVER_ADDR:?Indica IP privada de probador:7070}
+      TT_ENABLE_DIRECT_BENCH: ${TT_ENABLE_DIRECT_BENCH:-0}
+    volumes:
+      - ./deploy/verifier:/srv/tt/verifier:ro
+    ports:
+      - "127.0.0.1:8080:8080"

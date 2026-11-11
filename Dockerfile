@@ -58,7 +58,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS prover
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      libntl44 libssl3t64 libmysqlclient21 \
+      libntl44 libssl3t64 libmysqlclient21 ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tt
 

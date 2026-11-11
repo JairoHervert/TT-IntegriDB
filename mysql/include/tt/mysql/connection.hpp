@@ -9,6 +9,8 @@
 // docker-compose.yml por defecto:
 //   TT_DB_HOST (127.0.0.1)  TT_DB_PORT (3306)  TT_DB_USER (app_user)
 //   TT_DB_NAME (academic_db)  TT_DB_PASS (obligatoria, sin valor por defecto)
+//   TT_DB_TLS_MODE (DEFAULT o VERIFY_IDENTITY)
+//   TT_DB_TLS_CA (ruta al paquete de certificados CA para VERIFY_IDENTITY)
 // La contrasena no tiene valor por defecto para no dejarla escrita en el
 // codigo; se define con:  export TT_DB_PASS=...
 //
@@ -45,13 +47,17 @@ struct ConnectionConfig {
     std::string user = "app_user";
     std::string password;
     std::string database = "academic_db";
+    // DEFAULT conserva el comportamiento previo de libmysqlclient.
+    // VERIFY_IDENTITY exige TLS y comprueba el certificado y el hostname.
+    std::string tls_mode = "DEFAULT";
+    std::string tls_ca_file;
 
     /*
      * Lee la configuracion de las variables TT_DB_* (ver arriba).
      *
      * Errores:
-     *   Lanza ConfigError si falta TT_DB_PASS o si TT_DB_PORT no es un
-     *   puerto valido.
+     *   Lanza ConfigError si falta TT_DB_PASS, si TT_DB_PORT no es un
+     *   puerto valido o si la configuracion TLS es incompleta.
      */
     static ConnectionConfig from_environment();
 
@@ -71,7 +77,8 @@ class Connection {
 public:
     /*
      * Abre la conexion por TCP, con utf8mb4 y un limite de 5 segundos para
-     * conectarse.
+     * conectarse. VERIFY_IDENTITY valida el certificado TLS y el hostname
+     * (TT_DB_HOST debe ser el FQDN del servidor).
      *
      * Errores:
      *   Lanza DatabaseError si no se puede conectar.

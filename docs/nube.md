@@ -1,5 +1,9 @@
 # Despliegue en la nube
 
+Este documento describe el despliegue con MySQL dentro de Docker.
+Para el escenario de Azure Database for MySQL Flexible Server con 500
+alumnos, utilizar [azure_mysql_500.md](azure_mysql_500.md).
+
 El esquema se reparte igual que en la arquitectura del reporte. El servidor
 no confiable queda en la nube y lo confiable se queda en la computadora del
 cliente:

@@ -7,6 +7,8 @@ CMakeLists.txt            construcción de todo el código C++
 docker-compose.yml        orquesta los servicios: db, prover y verifier
 compose.server.yml        lado servidor para la nube: db y prover
 compose.client.yml        lado cliente: verifier con la interfaz
+compose.azure.prover.yml  Azure: probador conectado a MySQL Flexible Server
+compose.azure.verifier.yml Azure: verificador en su propia VM
 Dockerfile                imágenes del probador y del verificador
 .dockerignore             lo que no entra a las imágenes (claves, estado)
 academic_records_db/      base de datos del caso de estudio (Servidor SQL)
@@ -45,7 +47,8 @@ docs/consultas.md         decisiones de ProofGen/Verify (C1–C6) y su justifica
 docs/red.md               separación de los módulos y comunicación por red
 docs/interfaz.md          interfaz del caso de estudio y sus decisiones
 docs/contenedores.md      empaquetado en contenedores y sus decisiones
-docs/nube.md              despliegue: base y probador en la nube, cliente local
+docs/nube.md              despliegue con MySQL en contenedor, cliente local
+docs/azure_mysql_500.md   Azure: MySQL administrado, dos VM y 500 alumnos
 docs/comparacion_rendimiento.md  comparación verificable frente a SQL directo
 docs/experimentos_pareados.md   series de medición desde el navegador
 docs/medicion_etapas.md        desglose de costos AIT, Merkle y ASO

@@ -57,6 +57,14 @@ ConnectionConfig ConnectionConfig::from_environment() {
                           "(por ejemplo: export TT_DB_PASS=app_pass_2026)");
     }
     c.password = password;
+    c.tls_mode = env_or("TT_DB_TLS_MODE", "DEFAULT");
+    if (c.tls_mode != "DEFAULT" && c.tls_mode != "VERIFY_IDENTITY") {
+        throw ConfigError("TT_DB_TLS_MODE debe ser DEFAULT o VERIFY_IDENTITY");
+    }
+    c.tls_ca_file = env_or("TT_DB_TLS_CA", "");
+    if (c.tls_mode == "VERIFY_IDENTITY" && c.tls_ca_file.empty()) {
+        throw ConfigError("TT_DB_TLS_CA es obligatoria cuando TT_DB_TLS_MODE=VERIFY_IDENTITY");
+    }
     return c;
 }
 
@@ -79,6 +87,30 @@ Connection::Connection(const ConnectionConfig& config) : impl_(std::make_unique<
     mysql_options(impl_->handle, MYSQL_SET_CHARSET_NAME, "utf8mb4");
     mysql_options(impl_->handle, MYSQL_OPT_PROTOCOL, &protocol);
     mysql_options(impl_->handle, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+    if (config.tls_mode == "VERIFY_IDENTITY") {
+        // Verificacion completa del certificado. No desactivar TLS para usar
+        // Azure: el FQDN se comprueba contra el certificado presentado.
+        auto set_ssl_option = [&](enum mysql_option option, const void* value) {
+            if (mysql_options(impl_->handle, option, value) != 0) {
+                const std::string message = "no se pudo configurar TLS: " +
+                                            std::string(mysql_error(impl_->handle));
+                mysql_close(impl_->handle);
+                impl_->handle = nullptr;
+                throw DatabaseError(message);
+            }
+        };
+        set_ssl_option(MYSQL_OPT_SSL_CA, config.tls_ca_file.c_str());
+#if defined(MARIADB_BASE_VERSION)
+        // Compatibilidad con Connector/C de MariaDB en entornos de desarrollo.
+        my_bool enabled = 1;
+        set_ssl_option(MYSQL_OPT_SSL_ENFORCE, &enabled);
+        set_ssl_option(MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &enabled);
+#else
+        // La imagen del probador utiliza libmysqlclient de Oracle.
+        enum mysql_ssl_mode mode = SSL_MODE_VERIFY_IDENTITY;
+        set_ssl_option(MYSQL_OPT_SSL_MODE, &mode);
+#endif
+    }
     if (mysql_real_connect(impl_->handle, config.host.c_str(), config.user.c_str(), config.password.c_str(),
                            config.database.c_str(), config.port, nullptr, 0) == nullptr) {
         const std::string message = "no se pudo conectar a " + config.describe() + ": [" +
@@ -86,6 +118,12 @@ Connection::Connection(const ConnectionConfig& config) : impl_(std::make_unique<
         mysql_close(impl_->handle);
         impl_->handle = nullptr;
         throw DatabaseError(message);
+    }
+    if (config.tls_mode == "VERIFY_IDENTITY" &&
+        (mysql_get_ssl_cipher(impl_->handle) == nullptr || *mysql_get_ssl_cipher(impl_->handle) == '\0')) {
+        mysql_close(impl_->handle);
+        impl_->handle = nullptr;
+        throw DatabaseError("la conexion MySQL no negocio TLS, aunque VERIFY_IDENTITY estaba habilitado");
     }
 }
 
