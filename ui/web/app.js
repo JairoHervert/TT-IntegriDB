@@ -472,6 +472,7 @@ async function refreshStatus() {
   }
   const firstLoad = state.status === null;
   state.status = status;
+  applyDirectVisibility();
   $('query-direct').disabled = state.benchmark.running || !status.client.direct_benchmark_enabled ||
     !state.current || state.current.id === 'range';
   const p = status.prover;
@@ -979,9 +980,7 @@ function selectQuery(id) {
   $('query-direct').disabled = !state.status || !state.status.client.direct_benchmark_enabled || item.id === 'range';
   // Las consultas N no tienen modo verificado que comparar con SQL directo.
   $('query-form').dataset.unverified = String(Boolean(item.unverified));
-  $('query-direct').hidden = Boolean(item.unverified);
-  $('direct-note').hidden = Boolean(item.unverified);
-  $('benchmark-section').hidden = Boolean(item.unverified);
+  applyDirectVisibility();
   $('query-submit').textContent = item.unverified ? 'Consultar sin verificar' : 'Consultar y verificar';
   updatePreview();
 }
@@ -1211,6 +1210,19 @@ function setBenchmarkControls(running) {
   $('benchmark-environment').disabled = running;
   for (const node of document.querySelectorAll('.tab')) node.disabled = running;
   updateMeasurementsToolbar();
+}
+
+/*
+ * Muestra el boton de SQL directo, su nota y el panel del experimento solo
+ * cuando el verificador se inicio con TT_ENABLE_DIRECT_BENCH=1 y la consulta
+ * elegida es verificable. En la ejecucion normal no aparecen.
+ */
+function applyDirectVisibility() {
+  const enabled = Boolean(state.status && state.status.client && state.status.client.direct_benchmark_enabled);
+  const show = enabled && !(state.current && state.current.unverified);
+  $('query-direct').hidden = !show;
+  $('direct-note').hidden = !show;
+  $('benchmark-section').hidden = !show;
 }
 
 /*
