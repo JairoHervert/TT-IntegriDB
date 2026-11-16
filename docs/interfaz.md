@@ -101,6 +101,7 @@ calcula el verificador con el mismo `parse_query`, y si δ no tiene los
 | `GET /api/status` | | δ local (id, plan, tablas, columnas con AIT para rangos) y estado del probador (si responde y si su δ coincide) |
 | `POST /api/preview` | la consulta en texto, por ejemplo `C4 6 8` | SQL y AIT, sin contactar al probador |
 | `POST /api/query` | la consulta en texto | veredicto, tiempos y resultado verificado |
+| `POST /api/unverified` | una consulta N1 a N5, por ejemplo `N3 1` | resultado **no verificado** con su motivo (ver `docs/consultas_no_verificables.md`) |
 | `GET /...` | | archivos de `ui/web` |
 
 Ejemplo de respuesta de `/api/query` (recortada):
@@ -123,7 +124,8 @@ Ejemplo de respuesta de `/api/query` (recortada):
 `outcome` puede ser `verified`, `rejected` (con `message` y sin `result`),
 `no_answer` (el probador no respondió o respondió con error; `prover.status`
 trae el código HTTP o 0 si no hubo conexión), `invalid` (400) o
-`unsupported` (422).
+`unsupported` (422). `/api/unverified` responde además `unverified`: hay
+resultado, pero sin prueba, y la página lo muestra con el sello naranja.
 
 ### Registro y exportación de mediciones
 

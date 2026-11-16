@@ -42,6 +42,7 @@ verifier/                 Cliente SQL + módulo verificador (bloque Cliente):
 tests/                    pruebas del núcleo, de la red y del adaptador
 docs/setup.md             decisiones de Setup y su justificación
 docs/consultas.md         decisiones de ProofGen/Verify (C1–C6) y su justificación
+docs/consultas_no_verificables.md  consultas N1–N5: resultado sin prueba, sello naranja
 docs/red.md               separación de los módulos y comunicación por red
 docs/interfaz.md          interfaz del caso de estudio y sus decisiones
 docs/contenedores.md      empaquetado en contenedores y sus decisiones

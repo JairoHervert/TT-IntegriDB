@@ -14,9 +14,11 @@
 #include "client_common.hpp"
 #include "commands.hpp"
 #include "tt/cli/cli.hpp"
+#include "tt/io/binary.hpp"
 #include "tt/io/file.hpp"
 #include "tt/net/prover_client.hpp"
 #include "tt/net/protocol.hpp"
+#include "tt/query/unverified.hpp"
 
 namespace tt::verifier {
 
@@ -36,6 +38,8 @@ struct QueryOptions {
     net::Endpoint server;
     int timeout_seconds = 600;
     fs::path save;                    // vacio: no se guarda
+    bool unverified = false;          // N1 a N5: resultado sin prueba
+    query::UnverifiedQuery unverified_query;
 };
 
 /*
@@ -79,13 +83,62 @@ QueryOptions parse_query_options(const std::vector<std::string>& args) {
             opt.words.push_back(arg);
         }
     }
-    opt.common.query = parse_query_words(opt.words);
+    if (query::is_unverified_query(opt.words)) {
+        // N1 a N5 no tienen prueba: no hay respuesta que guardar y verificar.
+        if (!opt.save.empty()) throw cli::UsageError("--save no aplica a N1 a N5: su resultado no tiene prueba");
+        try {
+            opt.unverified_query = query::parse_unverified_query(opt.words);
+        } catch (const query::QueryError& e) {
+            throw cli::UsageError(e.what());
+        }
+        opt.unverified = true;
+    } else {
+        opt.common.query = parse_query_words(opt.words);
+    }
     try {
         opt.server = net::parse_endpoint(server);
     } catch (const net::AddressError& e) {
         throw cli::UsageError(e.what());
     }
     return opt;
+}
+
+/*
+ * Pide una consulta no verificable y muestra el resultado con el aviso de
+ * que no tiene prueba. No carga delta ni la clave: no hay nada que
+ * verificar. El resultado se revisa solo en su forma (id y columnas).
+ */
+int run_unverified(const QueryOptions& opt) {
+    const query::UnverifiedQuery& q = opt.unverified_query;
+    std::printf("[verifier] %s NO se puede verificar con el esquema: %s\n", q.catalog_id.c_str(),
+                query::unverified_reason(q).c_str());
+    std::printf("[verifier] se pide el resultado SIN prueba al probador en %s\n", opt.server.text().c_str());
+    net::ClientOptions client;
+    client.read_timeout_seconds = opt.timeout_seconds;
+    query::UnverifiedResult result;
+    net::MeasuredUnverified answer;
+    try {
+        answer = net::fetch_unverified_measured(opt.server, net::join_words(opt.words), client);
+        result = query::decode_unverified_result(answer.bytes, q);
+    } catch (const net::ServerError& e) {
+        std::fprintf(stderr, "[verifier] el probador no entrego una respuesta: %s\n", e.what());
+        return kExitNoAnswer;
+    } catch (const net::NetworkError& e) {
+        std::fprintf(stderr, "[verifier] sin respuesta: %s\n", e.what());
+        return kExitNoAnswer;
+    } catch (const io::FormatError& e) {
+        std::fprintf(stderr, "[verifier] el resultado recibido tiene un formato invalido: %s\n", e.what());
+        return kExitNoAnswer;
+    }
+    std::printf("[verifier] resultado NO VERIFICADO: %llu filas (%s) en %.2f s\n",
+                static_cast<unsigned long long>(result.row_count), cli::size_text(answer.bytes.size()).c_str(),
+                answer.roundtrip_seconds);
+    query::ResultTable table;
+    for (const query::UnverifiedColumn& c : result.columns) table.columns.push_back(c.name);
+    table.rows = result.rows;
+    print_table(table, opt.common.show);
+    std::printf("[verifier] AVISO: no hay prueba de que este resultado este completo ni sin alterar.\n");
+    return kExitUnverified;
 }
 
 }  // namespace
@@ -110,7 +163,10 @@ std::string query_usage() {
            "      --save <archivo>        guarda tambien la respuesta recibida, para volver a\n"
            "                              verificarla con 'verify'.\n"
            "      Codigo de salida: 0 verificada, 3 rechazada, 1 no se pudo verificar,\n"
-           "      4 el probador no entrego respuesta (red o error del servidor).\n";
+           "      4 el probador no entrego respuesta (red o error del servidor),\n"
+           "      5 resultado entregado SIN verificar (N1 a N5).\n"
+           "      Consultas no verificables (el probador entrega el resultado sin prueba):\n" +
+           std::string(query::kUnverifiedForms);
 }
 
 /*
@@ -120,6 +176,7 @@ std::string query_usage() {
  */
 int run_query(const std::vector<std::string>& args) {
     const QueryOptions opt = parse_query_options(args);
+    if (opt.unverified) return run_unverified(opt);
     ClientState state;
     if (const int code = prepare_client(opt.common, state); code != 0) return code;
 

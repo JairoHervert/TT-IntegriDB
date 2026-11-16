@@ -39,6 +39,7 @@ add_library(tt_core STATIC
   src/query/response_io.cpp
   src/query/prover_service.cpp
   src/query/verifier_service.cpp
+  src/query/unverified.cpp
 )
 
 target_include_directories(tt_core PUBLIC include)

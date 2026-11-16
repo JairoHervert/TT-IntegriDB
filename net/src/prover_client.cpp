@@ -200,6 +200,25 @@ MeasuredDirect fetch_direct_measured(const Endpoint& endpoint, const std::string
 }
 
 /*
+ * Implementacion: mismo enlace y limites que /v1/query; los bytes se
+ * entregan sin interpretar (los revisa decode_unverified_result).
+ */
+MeasuredUnverified fetch_unverified_measured(const Endpoint& endpoint, const std::string& query_text,
+                                             const ClientOptions& options) {
+    httplib::Client cli = make_client(endpoint, options, options.max_response_bytes);
+    const auto start = std::chrono::steady_clock::now();
+    httplib::Result res = cli.Post(kUnverifiedPath, query_text, "text/plain");
+    if (!res) throw_network_error(endpoint, res.error(), options.max_response_bytes);
+    if (res->status != 200) throw_server_error(endpoint, res->status, res->body.substr(0, kMaxErrorBytes));
+    MeasuredUnverified result;
+    result.roundtrip_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    result.server_timings = parse_direct_timings(*res);
+    result.bytes.assign(res->body.begin(), res->body.end());
+    return result;
+}
+
+/*
  * Mantiene la interfaz anterior del cliente y entrega los mismos bytes.
  */
 std::vector<unsigned char> fetch_answer(const Endpoint& endpoint, const std::string& query_text,

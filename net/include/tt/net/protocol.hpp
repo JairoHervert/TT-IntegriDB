@@ -16,6 +16,14 @@
 //                          no responde).
 //                     En los errores, el cuerpo es un mensaje en texto.
 //
+//   POST /v1/unverified  cuerpo: una consulta no verificable (N1 a N5, ver
+//                     tt/query/unverified.hpp).
+//                     200: el resultado en formato TTUNV, SIN prueba; el
+//                          verificador lo muestra como no verificado.
+//                     400: la consulta esta mal escrita.
+//                     404: el probador no tiene habilitadas estas consultas.
+//                     500: el probador no pudo responder.
+//
 //   GET  /v1/health   estado del probador en texto (ver HealthInfo); sirve
 //                     para comprobar la conexion y para el healthcheck de
 //                     Docker.
@@ -44,6 +52,8 @@ inline constexpr int kDefaultPort = 7070;
 inline constexpr const char* kQueryPath = "/v1/query";
 // Ruta experimental optativa: SQL directo, SIN verificacion de integridad.
 inline constexpr const char* kDirectPath = "/v1/direct";
+// Consultas no verificables N1 a N5: resultado sin prueba, siempre marcado.
+inline constexpr const char* kUnverifiedPath = "/v1/unverified";
 inline constexpr const char* kHealthPath = "/v1/health";
 
 // Tamano maximo del texto de una consulta. La consulta mas larga del

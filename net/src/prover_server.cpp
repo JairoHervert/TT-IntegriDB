@@ -71,6 +71,7 @@ struct ProverServer::Impl {
     ServerOptions options;
     RequestLogger logger;
     DirectRunner direct_runner;
+    UnverifiedRunner unverified_runner;
     httplib::Server server;
     std::mutex work_mutex;     // una consulta a la vez (ver prover_server.hpp)
     std::string health_text;   // cuerpo fijo de /v1/health
@@ -217,6 +218,63 @@ struct ProverServer::Impl {
     }
 
     /*
+     * Atiende POST /v1/unverified: una consulta N1 a N5 se ejecuta en MySQL
+     * y se devuelve en TTUNV, sin prueba. No toma el candado de ProofGen:
+     * no usa NTL ni el estado autenticado y abre su propia conexion, asi
+     * que no espera detras de una prueba larga. Las consultas C1 a C14
+     * nunca se responden por esta ruta.
+     */
+    void handle_unverified(const httplib::Request& req, httplib::Response& res) {
+        const auto start = Clock::now();
+        RequestRecord record;
+        record.client = req.remote_addr + ":" + std::to_string(req.remote_port);
+        record.method = req.method;
+        record.path = req.path;
+        record.query = safe_text(req.body, 120);
+        auto fail = [&](int status, const std::string& message) {
+            res.status = status;
+            res.set_content(message + "\n", "text/plain; charset=utf-8");
+            record.status = status;
+            record.note = message;
+        };
+        if (!unverified_runner) {
+            fail(404, "este probador no tiene habilitadas las consultas no verificables");
+        } else {
+            try {
+                if (!plain_text(req.body)) throw query::QueryError("se requiere texto ASCII imprimible");
+                const query::UnverifiedQuery parsed = query::parse_unverified_query(split_words(req.body));
+                const UnverifiedReply reply = unverified_runner(parsed);
+                if (reply.bytes.size() > kMaxResponseBytes) {
+                    fail(413, "resultado demasiado grande para el limite de respuesta");
+                } else {
+                    res.status = 200;
+                    res.set_content(std::string(reply.bytes.begin(), reply.bytes.end()), "application/octet-stream");
+                    record.status = 200;
+                    record.note = "NO verificable: " + std::to_string(reply.rows) + (reply.rows == 1 ? " fila" : " filas") +
+                                  " sin prueba";
+                    record.generation_seconds = reply.sql_seconds;
+                    record.encoding_seconds = reply.encoding_seconds;
+                }
+            } catch (const query::QueryError& e) {
+                fail(400, std::string("consulta mal escrita: ") + e.what());
+            } catch (const std::exception& e) {
+                fail(500, std::string("el probador no pudo responder: ") + e.what());
+            }
+        }
+        record.bytes = res.body.size();
+        record.seconds = seconds_since(start);
+        if (record.status == 200) {
+            // Mismas cabeceras que la ruta SQL directa: tiempos informativos.
+            res.set_header("X-TT-Unverified", "1");
+            res.set_header("X-TT-Direct-Sql-Seconds", metric_text(record.generation_seconds));
+            res.set_header("X-TT-Direct-Encoding-Seconds", metric_text(record.encoding_seconds));
+            res.set_header("X-TT-Direct-Queue-Seconds", metric_text(0));
+            res.set_header("X-TT-Direct-Handler-Seconds", metric_text(record.seconds));
+        }
+        log(record);
+    }
+
+    /*
      * Atiende GET /v1/health con el estado cargado al iniciar.
      */
     void handle_health(const httplib::Request& req, httplib::Response& res) const {
@@ -255,7 +313,7 @@ struct ProverServer::Impl {
  * bind().
  */
 ProverServer::ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger,
-                           DirectRunner direct_runner)
+                           DirectRunner direct_runner, UnverifiedRunner unverified_runner)
     : impl_(std::make_unique<Impl>()) {
     if (context.database == nullptr || context.digest == nullptr) {
         throw std::invalid_argument("el servidor del probador necesita delta y D~ cargados");
@@ -264,6 +322,7 @@ ProverServer::ProverServer(query::ProverContext context, ServerOptions options, 
     impl_->options = std::move(options);
     impl_->logger = std::move(logger);
     impl_->direct_runner = std::move(direct_runner);
+    impl_->unverified_runner = std::move(unverified_runner);
 
     HealthInfo info;
     info.state_id = context.digest->id();
@@ -282,6 +341,8 @@ ProverServer::ProverServer(query::ProverContext context, ServerOptions options, 
     Impl* impl = impl_.get();
     svr.Post(kQueryPath, [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_query(req, res); });
     svr.Post(kDirectPath, [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_direct(req, res); });
+    svr.Post(kUnverifiedPath,
+             [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_unverified(req, res); });
     svr.Get(kHealthPath,
             [impl](const httplib::Request& req, httplib::Response& res) { impl->handle_health(req, res); });
     svr.set_error_handler([impl](const httplib::Request& req, httplib::Response& res) { impl->handle_error(req, res); });

@@ -133,6 +133,9 @@ UiServer::UiServer(Portal& portal, UiServerOptions options, HttpErrorLogger erro
     svr.Post("/api/query", [impl](const httplib::Request& req, httplib::Response& res) {
         Impl::reply(res, impl->portal->query(req.body));
     });
+    svr.Post("/api/unverified", [impl](const httplib::Request& req, httplib::Response& res) {
+        Impl::reply(res, impl->portal->unverified(req.body));
+    });
     svr.Post("/api/direct", [impl](const httplib::Request& req, httplib::Response& res) {
         Impl::reply(res, impl->portal->direct(req.body));
     });

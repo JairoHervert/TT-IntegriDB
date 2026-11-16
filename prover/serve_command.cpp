@@ -18,6 +18,7 @@
 #include "tt/mysql/connection.hpp"
 #include "tt/mysql/direct_query.hpp"
 #include "tt/mysql/row_store.hpp"
+#include "tt/mysql/unverified_query.hpp"
 #include "tt/net/prover_server.hpp"
 #include "tt/net/protocol.hpp"
 
@@ -221,10 +222,21 @@ int run_serve(const std::vector<std::string>& args) {
         };
         std::printf("[prover] referencia SQL directa habilitada solo para pruebas (SIN verificar)\n");
     }
-    net::ProverServer server(context, server_options, log_request, direct_runner);
+    // Consultas no verificables N1 a N5: siempre disponibles, porque su
+    // resultado viaja en TTUNV y el verificador lo marca como no verificado.
+    net::UnverifiedRunner unverified_runner = [&db_config](const query::UnverifiedQuery& query) {
+        const mysql::UnverifiedSqlResult result = mysql::run_unverified_query(db_config, query);
+        net::UnverifiedReply reply;
+        reply.bytes = result.bytes;
+        reply.rows = result.rows;
+        reply.sql_seconds = result.sql_seconds;
+        reply.encoding_seconds = result.encoding_seconds;
+        return reply;
+    };
+    net::ProverServer server(context, server_options, log_request, direct_runner, unverified_runner);
     const int port = server.bind();
-    std::printf("[prover] escuchando en %s:%d (POST %s, GET %s); Ctrl+C para detener\n", opt.server.host.c_str(), port,
-                net::kQueryPath, net::kHealthPath);
+    std::printf("[prover] escuchando en %s:%d (POST %s, POST %s, GET %s); Ctrl+C para detener\n",
+                opt.server.host.c_str(), port, net::kQueryPath, net::kUnverifiedPath, net::kHealthPath);
 
     cli::run_until_signal([&] { server.run(); }, [&] { server.stop(); }, "prover");
     std::printf("[prover] servidor detenido\n");

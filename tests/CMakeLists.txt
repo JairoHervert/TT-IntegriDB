@@ -19,6 +19,7 @@ tt_add_test(tree_plan_test)
 tt_add_test(setup_test)
 tt_add_test(state_io_test)
 tt_add_test(query_test)
+tt_add_test(unverified_test)
 tt_add_test(selection_test)
 tt_add_test(multirange_test)
 tt_add_test(count_intersection_test)
@@ -78,6 +79,12 @@ set_tests_properties(prover_serve_requires_state_exit PROPERTIES WILL_FAIL TRUE)
 # Una direccion con esquema es un error de uso.
 add_test(NAME verifier_rejects_url_address COMMAND tt_verifier query C4 6 8 --server http://prover:7070)
 set_tests_properties(verifier_rejects_url_address PROPERTIES PASS_REGULAR_EXPRESSION "sin 'http://'")
+# N1 a N5 no tienen prueba: no se pueden guardar para 'verify' y un valor
+# con comodines se rechaza antes de tocar la red.
+add_test(NAME verifier_unverified_rejects_save COMMAND tt_verifier query N3 1 --save r.bin)
+set_tests_properties(verifier_unverified_rejects_save PROPERTIES PASS_REGULAR_EXPRESSION "--save no aplica")
+add_test(NAME verifier_unverified_rejects_wildcard COMMAND tt_verifier query N1 G%)
+set_tests_properties(verifier_unverified_rejects_wildcard PROPERTIES PASS_REGULAR_EXPRESSION "1 a 30 letras")
 # Sin probador escuchando, ping termina con el codigo 4 (sin respuesta).
 add_test(NAME verifier_ping_without_server COMMAND tt_verifier ping --server 127.0.0.1:1)
 set_tests_properties(verifier_ping_without_server PROPERTIES PASS_REGULAR_EXPRESSION "no se pudo conectar")

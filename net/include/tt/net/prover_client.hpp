@@ -87,6 +87,32 @@ struct MeasuredDirect {
 MeasuredDirect fetch_direct_measured(const Endpoint& endpoint, const std::string& query_text,
                                      const ClientOptions& options = {});
 
+// Resultado de una consulta no verificable (N1 a N5): bytes TTUNV sin
+// revisar y los tiempos que declara el servidor (no autenticados).
+struct MeasuredUnverified {
+    std::vector<unsigned char> bytes;
+    double roundtrip_seconds = 0;
+    std::optional<DirectServerTimings> server_timings;
+};
+
+/*
+ * Envia una consulta no verificable (POST /v1/unverified).
+ *
+ * Parametros:
+ *   endpoint    direccion del probador
+ *   query_text  consulta en texto, por ejemplo "N3 1"
+ *   options     tiempos de espera y tamano maximo
+ *
+ * Devuelve:
+ *   Los bytes TTUNV recibidos, sin revisar, y las mediciones.
+ *
+ * Errores:
+ *   Lanza NetworkError si no hubo comunicacion completa y ServerError si el
+ *   probador respondio con un codigo distinto de 200.
+ */
+MeasuredUnverified fetch_unverified_measured(const Endpoint& endpoint, const std::string& query_text,
+                                             const ClientOptions& options = {});
+
 struct MeasuredAnswer {
     std::vector<unsigned char> bytes;
     double roundtrip_seconds = 0;  // POST visto por el verificador

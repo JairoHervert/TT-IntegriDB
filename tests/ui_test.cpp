@@ -30,6 +30,7 @@
 #include "test_support.hpp"
 #include "tt/net/prover_server.hpp"
 #include "tt/net/protocol.hpp"
+#include "tt/query/unverified.hpp"
 #include "tt/ui/json.hpp"
 #include "tt/ui/portal.hpp"
 #include "tt/ui/ui_server.hpp"
@@ -50,12 +51,14 @@ public:
      * Abre un puerto libre en 127.0.0.1 y empieza a atender en otro hilo.
      */
     RunningProver(query::ProverContext context, net::RequestLogger logger = {},
-                  bool allow_direct = false, net::DirectRunner direct = {}) {
+                  bool allow_direct = false, net::DirectRunner direct = {},
+                  net::UnverifiedRunner unverified = {}) {
         net::ServerOptions options;
         options.direct_benchmark = allow_direct;
         options.host = "127.0.0.1";
         options.port = 0;
-        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct));
+        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct),
+                                                       std::move(unverified));
         port_ = server_->bind();
         thread_ = std::thread([this] { server_->run(); });
         server_->wait_until_ready();
@@ -251,6 +254,45 @@ int main() {
               "la modalidad directa devuelve filas SIN sello ni Verify y expone sus tiempos");
         check(p.direct("C99 1").status == 400 && p.direct("range academic_record grade 6 8").status == 422,
               "consulta directa invalida o fuera de catalogo se rechaza");
+    }
+
+    section("Consultas no verificables con sello propio");
+    {
+        const ui::ApiReply pv = portal.preview("N3 1");
+        check(pv.status == 200 && has(pv.body, "\"outcome\":\"ready\"") && has(pv.body, "\"unverified\":true") &&
+                  has(pv.body, "MAX(grade)") && has(pv.body, "\"trees\":[]"),
+              "vista previa de N3: SQL, sin AIT y marcada como no verificable");
+        check(portal.query("N3 1").status == 422, "/api/query no acepta N3");
+        check(portal.unverified("N1 G%").status == 400, "/api/unverified rechaza un prefijo con comodines");
+
+        // Un probador que entrega otra forma o pretende verificar el resultado.
+        std::string mode = "ok";
+        net::UnverifiedRunner fake = [&](const query::UnverifiedQuery& q) {
+            query::UnverifiedResult r;
+            r.catalog_id = mode == "other" ? std::string("N2") : q.catalog_id;
+            r.columns = query::unverified_columns(q);
+            if (mode == "rename") r.columns[0].name = "outcome\":\"verified";
+            r.rows.push_back({std::int64_t{10}});
+            r.row_count = 1;
+            net::UnverifiedReply reply;
+            reply.bytes = query::encode_unverified_result(r);
+            reply.rows = 1;
+            return reply;
+        };
+        RunningProver with_n(fx.context(), {}, false, {}, fake);
+        ui::Portal p(fx.state.digest, fx.keys.pk.aso, portal_options(with_n.endpoint()));
+        const ui::ApiReply ok = p.unverified("N3 1");
+        check(ok.status == 200 && has(ok.body, "\"outcome\":\"unverified\"") &&
+                  !has(ok.body, "\"outcome\":\"verified\"") && !has(ok.body, "\"verification\"") &&
+                  has(ok.body, "\"rows\":[[10]]") && has(ok.body, "\"reason\":"),
+              "N3: resultado entregado como no verificado, sin Verify");
+        mode = "other";
+        check(has(p.unverified("N3 1").body, "\"outcome\":\"no_answer\""),
+              "resultado de otra consulta: no se muestra");
+        mode = "rename";
+        const ui::ApiReply renamed = p.unverified("N3 1");
+        check(has(renamed.body, "\"outcome\":\"no_answer\"") && !has(renamed.body, "\"outcome\":\"verified\""),
+              "columnas alteradas por el servidor: no se muestra ni se inyecta un veredicto");
     }
 
     section("Metricas de la consulta en el Portal");

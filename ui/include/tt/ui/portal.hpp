@@ -99,7 +99,8 @@ public:
      *
      * Devuelve:
      *   200 con outcome "ready"; 400 si esta mal escrita; 422 si no esta
-     *   soportada.
+     *   soportada. Para N1 a N5 tambien es "ready", con unverified: true y
+     *   el motivo por el que no se puede verificar.
      */
     ApiReply preview(const std::string& text) const;
 
@@ -123,6 +124,21 @@ public:
      * modo experimental. Se retransmite JSON sin afirmar autenticidad.
      */
     ApiReply direct(const std::string& text);
+
+    /*
+     * POST /api/unverified: consulta no verificable (N1 a N5). El probador
+     * entrega el resultado en TTUNV sin prueba; aqui se revisa su forma
+     * (id y columnas esperadas) y se escribe el JSON con outcome
+     * "unverified". Nunca se ejecuta Verify ni se usa el sello verde.
+     *
+     * Parametros:
+     *   text  la consulta, por ejemplo "N3 1"
+     *
+     * Devuelve:
+     *   200 con outcome unverified o no_answer; 400 si la consulta esta mal
+     *   escrita.
+     */
+    ApiReply unverified(const std::string& text);
 
 private:
     const scheme::DatabaseDigest& digest_;

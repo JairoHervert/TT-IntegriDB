@@ -26,6 +26,9 @@
   --bad-wash: #fcedeb;
   --wait: #8a5a00;
   --wait-wash: #fbf3e0;
+  /* Naranja de las consultas no verificables (N1 a N5) */
+  --unv: #b44a00;
+  --unv-wash: #fdeee2;
 
   --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, "Noto Serif", "DejaVu Serif", Georgia, serif;
   --sans: "Segoe UI", Ubuntu, Cantarell, "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
@@ -158,6 +161,11 @@ button, input, select { font: inherit; color: inherit; }
 .timing > .timing-direct-note {
   flex: 1 1 100%; margin: 0; padding: 12px 24px;
   border-top: 1px solid var(--rule); background: var(--wait-wash);
+  color: var(--ink-soft); font-size: 13px; line-height: 1.5;
+}
+.timing > .timing-unverified-note {
+  flex: 1 1 100%; margin: 0; padding: 12px 24px;
+  border-top: 1px solid var(--rule); background: var(--unv-wash);
   color: var(--ink-soft); font-size: 13px; line-height: 1.5;
 }
 .direct-banner {
@@ -539,6 +547,7 @@ table.data td.table-empty.rejected { color: var(--bad); }
 .stamp[data-outcome="verified"] { color: var(--ok); }
 .stamp[data-outcome="rejected"] { color: var(--bad); }
 .stamp[data-outcome="no_answer"] { color: var(--wait); }
+.stamp[data-outcome="unverified"] { color: var(--unv); }
 .stamp[data-outcome="pending"] { color: var(--ink-faint); transform: rotate(0deg); }
 .stamp[data-outcome="pending"] .ring-outer { stroke-dasharray: 4 5; animation: turn 6s linear infinite; transform-origin: 60px 60px; }
 
@@ -564,6 +573,9 @@ table.data td.table-empty.rejected { color: var(--bad); }
 .verdict h2 { font-size: 21px; }
 .verdict[data-outcome="verified"] h2 { color: var(--ok); }
 .verdict[data-outcome="rejected"] h2 { color: var(--bad); }
+.verdict[data-outcome="unverified"] { background: var(--unv-wash); }
+.verdict[data-outcome="unverified"] h2 { color: var(--unv); }
+.verdict .unverified-reason { color: var(--ink); }
 .verdict[data-outcome="no_answer"] h2,
 .verdict[data-outcome="unsupported"] h2,
 .verdict[data-outcome="invalid"] h2 { color: var(--wait); }
@@ -648,6 +660,8 @@ table.data td.table-empty.rejected { color: var(--bad); }
 
 .preview .sql { display: block; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .preview .trees { margin: 6px 0 0; font-size: 13px; color: var(--ink-soft); }
+.preview[data-outcome="unverified"] { border-color: var(--unv); background: var(--unv-wash); }
+.preview[data-outcome="unverified"] .trees { color: var(--unv); }
 .preview[data-outcome="invalid"] .trees,
 .preview[data-outcome="unsupported"] .trees { color: var(--bad); }
 
@@ -756,3 +770,12 @@ table.data td.table-empty.rejected { color: var(--bad); }
 @media (prefers-reduced-motion: reduce) {
   .stamp.pressed, .spinner, .stamp[data-outcome="pending"] .ring-outer { animation: none; }
 }
+
+/* ---- Consultas no verificables (N1 a N5) ------------------------------- */
+
+.catalog-list button[data-unverified="true"] .query-id {
+  border-color: var(--unv); color: var(--unv); background: var(--unv-wash);
+}
+#query-form[data-unverified="true"] .query-id { border-color: var(--unv); color: var(--unv); background: var(--unv-wash); }
+#query-form[data-unverified="true"] #query-submit { background: var(--unv); border-color: var(--unv); }
+#query-form[data-unverified="true"] #query-submit:hover { background: #8f3b00; }

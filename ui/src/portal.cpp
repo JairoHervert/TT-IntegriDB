@@ -14,7 +14,9 @@
 
 #include "tt/crypto/hash.hpp"
 #include "tt/crypto/pairing_group.hpp"
+#include "tt/io/binary.hpp"
 #include "tt/query/query.hpp"
+#include "tt/query/unverified.hpp"
 #include "tt/query/verifier_service.hpp"
 #include "tt/ui/json.hpp"
 
@@ -79,6 +81,12 @@ Prepared prepare(const std::string& body, const scheme::DatabaseDigest& digest) 
     }
     const std::vector<std::string> words = net::split_words(body);
     p.text = net::join_words(words);
+    if (query::is_unverified_query(words)) {
+        p.status = 422;
+        p.outcome = "unsupported";
+        p.message = words[0] + " no se puede verificar con el esquema; se consulta por /api/unverified";
+        return p;
+    }
     try {
         p.parsed = query::parse_query(words);
     } catch (const query::QueryError& e) {
@@ -154,6 +162,82 @@ void write_result(JsonWriter& w, const query::ResultTable& table, std::size_t ma
     for (std::size_t r = 0; r < shown; ++r) {
         w.begin_array();
         for (const query::ResultValue& v : table.rows[r]) write_value(w, v);
+        w.end_array();
+    }
+    w.end_array();
+    w.end_object();
+}
+
+// Una consulta no verificable ya leida, o el motivo por el que no se envia.
+struct PreparedUnverified {
+    std::string text;
+    std::optional<query::UnverifiedQuery> parsed;
+    std::string message;  // vacio si se puede enviar
+};
+
+/*
+ * Lee una consulta N1 a N5 con las mismas reglas que el probador.
+ */
+PreparedUnverified prepare_unverified(const std::string& body) {
+    PreparedUnverified p;
+    if (!plain_text(body)) {
+        p.text = net::safe_text(body, 120);
+        p.message = "la consulta debe ser texto ASCII imprimible";
+        return p;
+    }
+    const std::vector<std::string> words = net::split_words(body);
+    p.text = net::join_words(words);
+    try {
+        p.parsed = query::parse_unverified_query(words);
+    } catch (const query::QueryError& e) {
+        p.message = e.what();
+    }
+    return p;
+}
+
+/*
+ * Campos que describen una consulta no verificable: texto, id, SQL de la
+ * plantilla, ningun AIT y el motivo por el que no se puede verificar.
+ */
+void write_unverified_fields(JsonWriter& w, const PreparedUnverified& p) {
+    w.key("query").value(p.text);
+    w.key("catalog_id").value(p.parsed ? p.parsed->catalog_id : std::string());
+    w.key("sql").value(p.parsed ? query::unverified_sql(*p.parsed) : std::string());
+    w.key("trees").begin_array().end_array();
+    w.key("unverified").value(true);
+    w.key("reason").value(p.parsed ? query::unverified_reason(*p.parsed) : std::string());
+}
+
+/*
+ * Respuesta 400 para una consulta N mal escrita.
+ */
+ApiReply unverified_invalid(const PreparedUnverified& p) {
+    JsonWriter w;
+    w.begin_object();
+    write_unverified_fields(w, p);
+    w.key("outcome").value("invalid");
+    w.key("message").value(p.message);
+    w.end_object();
+    return {400, w.str(), {}};
+}
+
+/*
+ * Escribe un resultado TTUNV ya revisado con la misma forma que
+ * write_result. row_count es el total que declara el probador; truncated
+ * indica que llegaron o se muestran menos filas.
+ */
+void write_unverified_result(JsonWriter& w, const query::UnverifiedResult& r, std::size_t max_rows) {
+    const std::size_t shown = r.rows.size() < max_rows ? r.rows.size() : max_rows;
+    w.key("result").begin_object();
+    w.key("columns").begin_array();
+    for (const query::UnverifiedColumn& c : r.columns) w.value(c.name);
+    w.end_array();
+    w.key("row_count").value(r.row_count);
+    w.key("truncated").value(static_cast<std::uint64_t>(shown) < r.row_count);
+    w.key("rows").begin_array();
+    for (std::size_t i = 0; i < shown; ++i) {
+        w.begin_array();
+        for (const query::ResultValue& v : r.rows[i]) write_value(w, v);
         w.end_array();
     }
     w.end_array();
@@ -238,6 +322,17 @@ ApiReply Portal::status() const {
  * Implementacion: solo prepare(); no hay red.
  */
 ApiReply Portal::preview(const std::string& text) const {
+    if (query::is_unverified_query(net::split_words(text))) {
+        const PreparedUnverified u = prepare_unverified(text);
+        if (!u.parsed) return unverified_invalid(u);
+        JsonWriter w;
+        w.begin_object();
+        write_unverified_fields(w, u);
+        w.key("outcome").value("ready");
+        w.key("message").value("");
+        w.end_object();
+        return {200, w.str(), {}};
+    }
     const Prepared p = prepare(text, digest_);
     if (p.status != 200) return not_sent(p);
     JsonWriter w;
@@ -440,6 +535,90 @@ ApiReply Portal::direct(const std::string& text) {
         w.begin_object().key("outcome").value("no_answer").key("message").value(record.note).end_object();
         return {200, w.str(), {}};
     }
+}
+
+/*
+ * Implementacion: la consulta se valida aqui antes de enviarla; la
+ * respuesta se decodifica con decode_unverified_result, que exige el id y
+ * las columnas de la consulta pedida. El JSON lo escribe el verificador:
+ * outcome siempre es "unverified" y no hay campo de verificacion.
+ */
+ApiReply Portal::unverified(const std::string& text) {
+    const PreparedUnverified p = prepare_unverified(text);
+    QueryRecord record;
+    record.query = p.text;
+    if (!p.parsed) {
+        record.outcome = "invalid";
+        record.note = p.message;
+        if (logger_) logger_(record);
+        return unverified_invalid(p);
+    }
+
+    JsonWriter w;
+    w.begin_object();
+    write_unverified_fields(w, p);
+    w.key("state").begin_object();
+    w.key("id").value(state_id_);
+    w.key("version").value(static_cast<std::uint64_t>(digest_.state_version));
+    w.end_object();
+
+    const Clock::time_point start = Clock::now();
+    net::MeasuredUnverified answer;
+    int prover_status = 200;
+    std::string failure;
+    query::UnverifiedResult result;
+    try {
+        answer = net::fetch_unverified_measured(options_.prover, p.text, options_.query);
+        result = query::decode_unverified_result(answer.bytes, *p.parsed);
+    } catch (const net::ServerError& e) {
+        prover_status = e.status();
+        failure = "el probador respondio con error (" + std::to_string(e.status()) + "): " + e.what();
+    } catch (const net::NetworkError& e) {
+        prover_status = 0;
+        failure = e.what();
+    } catch (const io::FormatError& e) {
+        failure = std::string("el probador entrego un resultado con formato invalido: ") + e.what();
+    }
+    record.prover_seconds = failure.empty() ? answer.roundtrip_seconds : seconds_since(start);
+    record.bytes = answer.bytes.size();
+
+    w.key("prover").begin_object();
+    w.key("address").value(options_.prover.text());
+    w.key("status").value(prover_status);
+    w.key("seconds").value(record.prover_seconds);
+    w.key("bytes").value(static_cast<std::uint64_t>(record.bytes));
+    w.key("timings");
+    if (failure.empty() && answer.server_timings) {
+        // Informativos y no autenticados, como en las demas rutas.
+        const net::DirectServerTimings& t = *answer.server_timings;
+        w.begin_object();
+        w.key("sql_seconds").value(t.sql_seconds);
+        w.key("encoding_seconds").value(t.encoding_seconds);
+        w.key("handler_seconds").value(t.handler_seconds);
+        w.end_object();
+    } else {
+        w.null();
+    }
+    w.end_object();
+
+    if (!failure.empty()) {
+        w.key("outcome").value("no_answer");
+        w.key("message").value(net::safe_text(failure));
+        record.outcome = "no_answer";
+        record.note = net::safe_text(failure);
+    } else {
+        // row_count es el que declara el servidor y no se puede comprobar:
+        // puede haber recortado el resultado. Se muestran las filas recibidas.
+        w.key("outcome").value("unverified");
+        const std::string rows = std::to_string(result.row_count) + (result.row_count == 1 ? " fila" : " filas");
+        w.key("detail").value(rows + " sin prueba");
+        write_unverified_result(w, result, options_.max_rows);
+        record.outcome = "unverified";
+        record.note = rows + ", SIN verificar";
+    }
+    w.end_object();
+    if (logger_) logger_(record);
+    return {200, w.str(), {}};
 }
 
 }  // namespace tt::ui

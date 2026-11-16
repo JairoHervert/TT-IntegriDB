@@ -24,6 +24,7 @@
 #include "tt/net/prover_client.hpp"
 #include "tt/net/prover_server.hpp"
 #include "tt/net/protocol.hpp"
+#include "tt/query/unverified.hpp"
 
 using namespace tt;
 using test::check;
@@ -39,12 +40,14 @@ public:
      * Abre un puerto libre en 127.0.0.1 y empieza a atender en otro hilo.
      */
     explicit RunningServer(query::ProverContext context, net::RequestLogger logger = {},
-                           bool allow_direct = false, net::DirectRunner direct = {}) {
+                           bool allow_direct = false, net::DirectRunner direct = {},
+                  net::UnverifiedRunner unverified = {}) {
         net::ServerOptions options;
         options.direct_benchmark = allow_direct;
         options.host = "127.0.0.1";
         options.port = 0;
-        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct));
+        server_ = std::make_unique<net::ProverServer>(context, options, std::move(logger), std::move(direct),
+                                                       std::move(unverified));
         port_ = server_->bind();
         thread_ = std::thread([this] { server_->run(); });
         server_->wait_until_ready();
@@ -196,6 +199,38 @@ int main() {
                   server_status([&] { net::fetch_direct_measured(benchmark.endpoint(), "C2 1; DROP TABLE student"); }) == 400 &&
                   calls == 1,
               "no se permite SQL arbitrario ni se ejecutan consultas invalidas");
+    }
+
+    section("Consultas no verificables N1 a N5");
+    check(server_status([&] { net::fetch_unverified_measured(at, "N3 1"); }) == 404,
+          "sin adaptador, /v1/unverified responde 404");
+    {
+        std::size_t calls = 0;
+        net::UnverifiedRunner fake = [&](const query::UnverifiedQuery& q) {
+            ++calls;
+            query::UnverifiedResult r;
+            r.catalog_id = q.catalog_id;
+            r.columns = query::unverified_columns(q);
+            r.rows.push_back({std::int64_t{10}});
+            r.row_count = 1;
+            net::UnverifiedReply reply;
+            reply.bytes = query::encode_unverified_result(r);
+            reply.rows = 1;
+            reply.sql_seconds = 0.001;
+            return reply;
+        };
+        RunningServer with_n(fx.context(), {}, false, {}, fake);
+        const net::MeasuredUnverified u = net::fetch_unverified_measured(with_n.endpoint(), "N3 1");
+        const query::UnverifiedResult r = query::decode_unverified_result(u.bytes, query::parse_unverified_query({"N3", "1"}));
+        check(calls == 1 && r.rows.size() == 1 && u.server_timings && u.server_timings->sql_seconds >= 0,
+              "N3 por la red: TTUNV y tiempos informativos");
+        check(server_status([&] { net::fetch_unverified_measured(with_n.endpoint(), "N1 G%"); }) == 400 &&
+                  server_status([&] { net::fetch_unverified_measured(with_n.endpoint(), "C2 1"); }) == 400 &&
+                  server_status([&] { net::fetch_unverified_measured(with_n.endpoint(), "SELECT * FROM student"); }) == 400 &&
+                  calls == 1,
+              "/v1/unverified no acepta SQL libre, comodines ni consultas C");
+        check(server_status([&] { net::fetch_answer(with_n.endpoint(), "N3 1"); }) == 400,
+              "/v1/query no responde N3: nunca se presenta como verificable");
     }
 
     section("Estado del probador por la red");

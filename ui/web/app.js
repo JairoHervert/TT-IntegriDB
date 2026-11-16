@@ -6,6 +6,7 @@
  *   POST /api/preview   SQL y AIT de una consulta, sin enviarla al probador
  *   POST /api/query     veredicto del verificador y resultado verificado
  *   POST /api/direct    SQL directo experimental SIN integridad criptografica
+ *   POST /api/unverified  consultas N1 a N5: resultado del probador SIN prueba
  *
  * Nada se verifica aqui: el veredicto lo decide el verificador en C++ con
  * delta y la clave publica. Esta pagina solo lo muestra. Todos los datos de
@@ -84,6 +85,29 @@ const CATALOG = [
     ],
   },
   {
+    // N1 a N5: el esquema no tiene prueba para ellas. El probador entrega el
+    // resultado sin (R, pi) y la pagina lo marca con el sello naranja. Los
+    // motivos repiten con acentos los de unverified_reason (C++ es ASCII).
+    group: 'No verificables',
+    items: [
+      { id: 'N1', unverified: true,
+        reason: 'LIKE compara texto por patrón. El esquema solo ordena y autentica claves enteras, así que no hay un AIT que demuestre que no falta ningún alumno con ese apellido.', title: 'Alumnos por apellido', what: 'Alumnos cuyo apellido paterno empieza con un texto (LIKE).',
+        params: [{ label: 'Inicio del apellido', value: 'Garc', kind: 'text', hint: 'solo letras, sin acentos' }] },
+      { id: 'N2', unverified: true,
+        reason: 'GROUP BY necesita demostrar cada grupo y que no falte ninguno. El esquema autentica agregados sobre un solo conjunto (SUM, COUNT, AVG), no un agregado por grupo.', title: 'Promedio por periodo', what: 'Promedio y número de evaluaciones de un alumno en cada periodo (GROUP BY).',
+        params: [{ label: 'Número de alumno', value: '1', hint: 'student_id' }] },
+      { id: 'N3', unverified: true,
+        reason: 'MAX no está en el plan de árboles. Su prueba sería simétrica a la de C13 (MIN), pero se dejó como trabajo futuro.', title: 'Calificación máxima', what: 'La calificación más alta de un alumno (MAX).',
+        params: [{ label: 'Número de alumno', value: '1', hint: 'student_id' }] },
+      { id: 'N4', unverified: true,
+        reason: 'El esquema verifica JOIN entre dos tablas (C8, C9). Un JOIN de cuatro tablas requeriría componer pruebas de multiconjuntos que IntegriDB no define.', title: 'Kárdex con programa', what: 'Historial de un alumno con su programa y cada unidad de aprendizaje (JOIN de cuatro tablas).',
+        params: [{ label: 'Número de alumno', value: '1', hint: 'student_id' }] },
+      { id: 'N5', unverified: true,
+        reason: 'Ordenar por un promedio calculado y cortar con LIMIT exige probar el orden de un valor derivado de varias filas; el AIT solo ordena columnas almacenadas.', title: 'Mejores promedios', what: 'Los alumnos con el promedio más alto (GROUP BY, ORDER BY y LIMIT).',
+        params: [{ label: 'Cuántos alumnos', value: '10', hint: 'de 1 a 100' }] },
+    ],
+  },
+  {
     group: 'Consulta libre',
     items: [
       { id: 'range', title: 'Rango en una columna', what: 'Filas cuyo valor en una columna entera está dentro de un intervalo. Solo se ofrecen las columnas que tienen un AIT en δ.',
@@ -100,6 +124,7 @@ const OUTCOME_TEXT = {
   verified: 'Verificada',
   rejected: 'Rechazada',
   no_answer: 'Sin respuesta del probador',
+  unverified: 'No verificable',
   unsupported: 'No soportada por δ',
   invalid: 'Consulta mal escrita',
   ui_down: 'Sin conexión con el verificador',
@@ -279,7 +304,7 @@ function saveMeasurement(query, reply, browserSeconds, experiment = {}) {
     prover_address: prover.address || (state.status && state.status.prover ? state.status.prover.address : ''),
     http_status: prover.status === undefined ? (reply.outcome === 'direct' ? 200 : '') : prover.status,
     response_bytes: prover.bytes === undefined ? direct.bytes : prover.bytes,
-    result_row_count: (reply.outcome === 'verified' || reply.outcome === 'direct') && reply.result
+    result_row_count: ['verified', 'direct', 'unverified'].includes(reply.outcome) && reply.result
       ? reply.result.row_count : '',
     client_roundtrip_seconds: reply.outcome === 'direct' ? direct.roundtrip_seconds : prover.seconds,
     server_generation_seconds: times.generation_seconds,
@@ -415,8 +440,13 @@ async function callApi(path, body, deferMeasurement = false) {
     reply = { outcome: 'error', message: 'El servidor devolvió un resultado SQL con formato inesperado.' };
   }
   // Tiempo de lectura del JSON: excluye la actualizacion y el pintado de DOM.
-  if (path === '/api/query' || path === '/api/direct') {
-    reply.execution_mode = path === '/api/direct' ? 'sql_direct' : 'verified_path';
+  if (path === '/api/unverified' && reply && reply.outcome === 'unverified' &&
+      !(reply.result && Array.isArray(reply.result.columns) && Array.isArray(reply.result.rows))) {
+    reply = { outcome: 'error', message: 'El verificador devolvió un resultado no verificable con formato inesperado.' };
+  }
+  if (path === '/api/query' || path === '/api/direct' || path === '/api/unverified') {
+    reply.execution_mode = path === '/api/direct' ? 'sql_direct'
+      : path === '/api/unverified' ? 'unverified_path' : 'verified_path';
     reply.browser_request_seconds = (performance.now() - start) / 1000;
     if (!deferMeasurement) saveMeasurement(body, reply, reply.browser_request_seconds);
   }
@@ -501,7 +531,8 @@ function makeStamp(outcome, top, idHex, press) {
 
   const bottomText = svgEl('text', { class: 'stamp-id', dy: '3' });
   const bottomPath = svgEl('textPath', { href: `#arc-bottom-${n}`, startOffset: '50%', 'text-anchor': 'middle' });
-  bottomPath.textContent = idHex ? `δ ${shortId(idHex)}` : 'δ';
+  // Un resultado no verificable no se comprobo contra delta.
+  bottomPath.textContent = outcome === 'unverified' ? 'sin prueba' : idHex ? `δ ${shortId(idHex)}` : 'δ';
   bottomText.append(bottomPath);
   svg.append(bottomText);
 
@@ -510,6 +541,9 @@ function makeStamp(outcome, top, idHex, press) {
     svg.append(svgEl('path', { d: 'M45 61 L56 72 L76 49', ...mark }));
   } else if (outcome === 'rejected') {
     svg.append(svgEl('path', { d: 'M48 48 L72 72 M72 48 L48 72', ...mark }));
+  } else if (outcome === 'unverified') {
+    svg.append(svgEl('path', { d: 'M51 52 Q51 43 60 43 Q69 43 69 51 Q69 57 60 60 L60 65', ...mark }));
+    svg.append(svgEl('circle', { cx: 60, cy: 76, r: 3.6, fill: 'currentColor' }));
   } else if (outcome === 'no_answer') {
     svg.append(svgEl('path', { d: 'M60 45 L60 64', ...mark }));
     svg.append(svgEl('circle', { cx: 60, cy: 75, r: 3.6, fill: 'currentColor' }));
@@ -872,7 +906,9 @@ function renderCatalogList() {
   for (const group of CATALOG) {
     nav.append(el('h2', { text: group.group }));
     for (const item of group.items) {
-      const button = el('button', { attrs: { type: 'button', 'data-id': item.id } },
+      const attrs = { type: 'button', 'data-id': item.id };
+      if (item.unverified) attrs['data-unverified'] = 'true';
+      const button = el('button', { attrs },
         el('span', { className: 'query-id', text: item.id === 'range' ? 'rango' : item.id }),
         el('span', { text: item.title }));
       button.addEventListener('click', () => {
@@ -908,6 +944,9 @@ function makeParam(param, index) {
       input.append(el('option', { text: `${value}, ${text}`, attrs: { value } }));
     }
     input.value = param.value;
+  } else if (param.kind === 'text') {
+    input = el('input', { attrs: { id, pattern: '[A-Za-z]{1,30}', maxlength: '30', required: '', 'data-kind': 'text' } });
+    input.value = param.value || '';
   } else {
     input = el('input', { attrs: { id, inputmode: 'numeric', pattern: '-?[0-9]{1,18}', maxlength: '19', required: '' } });
     input.value = param.value || '';
@@ -938,6 +977,12 @@ function selectQuery(id) {
   $('query-note').hidden = !item.note;
   $('query-result').hidden = true;
   $('query-direct').disabled = !state.status || !state.status.client.direct_benchmark_enabled || item.id === 'range';
+  // Las consultas N no tienen modo verificado que comparar con SQL directo.
+  $('query-form').dataset.unverified = String(Boolean(item.unverified));
+  $('query-direct').hidden = Boolean(item.unverified);
+  $('direct-note').hidden = Boolean(item.unverified);
+  $('benchmark-section').hidden = Boolean(item.unverified);
+  $('query-submit').textContent = item.unverified ? 'Consultar sin verificar' : 'Consultar y verificar';
   updatePreview();
 }
 
@@ -952,7 +997,11 @@ function currentQueryText() {
   for (const field of fields) {
     const value = field.value.trim();
     if (!value) return null;
-    if (field.tagName === 'INPUT' && !/^-?[0-9]{1,18}$/.test(value)) return null;
+    if (field.dataset.kind === 'text') {
+      if (!/^[A-Za-z]{1,30}$/.test(value)) return null;
+    } else if (field.tagName === 'INPUT' && !/^-?[0-9]{1,18}$/.test(value)) {
+      return null;
+    }
     words.push(value);
   }
   return words.join(' ');
@@ -977,7 +1026,8 @@ async function updatePreview() {
   if (text === null) {
     box.dataset.outcome = 'invalid';
     $('query-sql').textContent = '';
-    $('query-trees').textContent = 'Escribe un número entero en cada campo.';
+    $('query-trees').textContent = state.current && state.current.params.some((p) => p.kind === 'text')
+      ? 'Escribe de 1 a 30 letras sin acentos ni espacios.' : 'Escribe un número entero en cada campo.';
     $('query-submit').disabled = true;
     return;
   }
@@ -985,7 +1035,11 @@ async function updatePreview() {
   if (text !== currentQueryText()) return;  // el usuario siguio escribiendo
   box.dataset.outcome = reply.outcome;
   $('query-sql').textContent = reply.sql || text;
-  if (reply.outcome === 'ready') {
+  if (reply.outcome === 'ready' && reply.unverified) {
+    box.dataset.outcome = 'unverified';
+    $('query-trees').textContent = `No se puede verificar: ${state.current.reason || reply.reason}`;
+    $('query-submit').disabled = state.benchmark.running;
+  } else if (reply.outcome === 'ready') {
     $('query-trees').textContent = `Se verifica con ${reply.trees.length === 1 ? 'el AIT' : 'los AIT'} ${reply.trees.join(', ')}.`;
     $('query-submit').disabled = state.benchmark.running;
   } else {
@@ -1006,7 +1060,8 @@ async function executeCatalogSample(text, direct) {
   renderVerdict({ outcome: 'pending' });
   clear($('result-timing'));
   clear($('result-body'));
-  const reply = await callApi(direct ? '/api/direct' : '/api/query', text, true);
+  const path = direct ? '/api/direct' : state.current && state.current.unverified ? '/api/unverified' : '/api/query';
+  const reply = await callApi(path, text, true);
   renderVerdict(reply);
   renderTiming(reply);
   renderResultBody(reply);
@@ -1040,7 +1095,7 @@ async function runCatalogQuery(event, direct = false) {
   } finally {
     state.manualQueryRunning = false;
     $('benchmark-run').disabled = false;
-    verifiedButton.disabled = $('query-preview').dataset.outcome !== 'ready';
+    verifiedButton.disabled = !['ready', 'unverified'].includes($('query-preview').dataset.outcome);
     directButton.disabled = !state.status || !state.status.client.direct_benchmark_enabled ||
       state.current.id === 'range';
   }
@@ -1146,7 +1201,7 @@ function renderBenchmarkSummary() {
 function setBenchmarkControls(running) {
   for (const node of $('catalog-list').querySelectorAll('button')) node.disabled = running;
   for (const node of $('query-params').querySelectorAll('input, select')) node.disabled = running;
-  $('query-submit').disabled = running || $('query-preview').dataset.outcome !== 'ready';
+  $('query-submit').disabled = running || !['ready', 'unverified'].includes($('query-preview').dataset.outcome);
   $('query-direct').disabled = running || !state.status || !state.status.client.direct_benchmark_enabled ||
     state.current.id === 'range';
   $('benchmark-run').disabled = running || state.manualQueryRunning;
@@ -1197,6 +1252,7 @@ async function runBenchmark() {
   const enabled = state.status && state.status.client.direct_benchmark_enabled;
   const progress = $('benchmark-progress');
   if (!enabled || !query || $('query-preview').dataset.outcome !== 'ready' || catalogId === 'range' ||
+      (state.current && state.current.unverified) ||
       !Number.isInteger(warmups) || warmups < 0 || warmups > 10 ||
       !Number.isInteger(repetitions) || repetitions < 1 || repetitions > 100 ||
       !environment || environment.length > 80) {
@@ -1303,6 +1359,7 @@ function renderVerdict(reply) {
     verified: 'Respuesta verificada',
     rejected: 'Respuesta rechazada',
     no_answer: 'Sin respuesta',
+    unverified: 'Resultado no verificado',
   }[outcome];
   box.append(makeStamp(outcome, top, id, outcome !== 'pending'));
   const text = el('div');
@@ -1312,6 +1369,11 @@ function renderVerdict(reply) {
   } else if (reply.outcome === 'verified') {
     text.append(el('h2', { text: 'Respuesta verificada' }),
       el('p', { text: `El resultado coincide con la base que autenticó el propietario: ${reply.detail}.` }));
+  } else if (reply.outcome === 'unverified') {
+    text.append(el('h2', { text: 'Resultado no verificado' }),
+      el('p', { text: `El servidor entregó estos datos (${reply.detail}), pero esta consulta no se puede verificar con el esquema.` }),
+      el('p', { className: 'unverified-reason', text: `Motivo: ${(findQuery(reply.catalog_id) || {}).reason || reply.reason}` }),
+      el('p', { text: 'Nada demuestra que el resultado esté completo ni que no haya sido alterado.' }));
   } else if (reply.outcome === 'rejected') {
     text.append(el('h2', { text: 'Respuesta rechazada' }),
       el('p', { className: 'reason', text: reply.message }),
@@ -1347,6 +1409,18 @@ function renderTiming(reply) {
       'Hasta recibir y leer JSON; no incluye pintar los resultados'));
     box.append(el('p', { className: 'timing-direct-note', text:
       'SQL directo es el referente de rendimiento, NO una respuesta autenticada.' }));
+    return;
+  }
+  if (reply.outcome === 'unverified' && reply.prover) {
+    const t = reply.prover.timings || {};
+    box.append(block('Obtención HTTP', formatSeconds(reply.prover.seconds),
+      `Ida y vuelta al probador, ${formatBytes(reply.prover.bytes)} sin prueba`));
+    box.append(block('SQL en el servidor', formatSeconds(t.sql_seconds),
+      'Conexión MySQL, ejecución y lectura de filas; no hay ProofGen'));
+    box.append(block('Tiempo total del navegador', formatSeconds(reply.browser_total_seconds),
+      'Desde la acción del usuario hasta pintar el resultado'));
+    box.append(el('p', { className: 'timing-unverified-note', text:
+      'No se ejecutó Verify: no hay (R, π) que comprobar contra δ.' }));
     return;
   }
   if (!reply.prover || reply.prover.status !== 200) return;
@@ -1419,7 +1493,7 @@ function renderTiming(reply) {
 function renderResultBody(reply) {
   const box = $('result-body');
   clear(box);
-  if (!['verified', 'direct'].includes(reply.outcome) || !reply.result) return;
+  if (!['verified', 'direct', 'unverified'].includes(reply.outcome) || !reply.result) return;
   const result = reply.result;
   const isScalar = result.columns.length === 1 && result.rows.length === 1 && /\(/.test(result.columns[0]);
   if (isScalar) {

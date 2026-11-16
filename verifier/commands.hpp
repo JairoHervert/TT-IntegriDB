@@ -17,6 +17,10 @@ constexpr int kExitRejected = 3;
 // conectar, se agoto el tiempo o respondio con un error.
 constexpr int kExitNoAnswer = 4;
 
+// Codigo de salida cuando se entrego el resultado de una consulta no
+// verificable (N1 a N5): hay datos, pero sin prueba.
+constexpr int kExitUnverified = 5;
+
 /*
  * Texto de ayuda del comando verify (incluye las formas de consulta que
  * acepta el nucleo).

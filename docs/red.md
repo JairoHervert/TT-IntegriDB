@@ -55,6 +55,7 @@ HTTP/1.1 sobre TCP, puerto 7070 por omisión.
 | Ruta | Petición | Respuesta |
 |---|---|---|
 | `POST /v1/query` | Cuerpo: la consulta en texto, igual que en la línea de comandos (`C4 6 8`, `C7 6 8 20221 20222`, `C8`, `range student admission_term 20221 20231`). Máximo 1 KB. | `200` y el cuerpo es (R, π) en formato TTRSP (`application/octet-stream`). |
+| `POST /v1/unverified` | Cuerpo: una consulta no verificable, `N1 <prefijo>` a `N5 <n>`. | `200` y el resultado en formato TTUNV, **sin prueba** (ver `docs/consultas_no_verificables.md`). `404` si el probador no tiene el adaptador. |
 | `GET /v1/health` | — | `200` con el estado: id de δ, versión, plan y si cargó la clave pública. |
 
 Errores (el cuerpo es un mensaje en texto):
@@ -80,7 +81,8 @@ public_key yes
 Códigos de salida del verificador: 0 verificada, 3 rechazada, 1 no se pudo
 verificar (faltan δ o pk locales, consulta no soportada, pk que no
 corresponde a δ), 2 consulta u opciones mal escritas, **4 el probador no
-entregó respuesta** (sin conexión, tiempo agotado o error del servidor).
+entregó respuesta** (sin conexión, tiempo agotado o error del servidor),
+**5 resultado entregado sin verificar** (consultas N1 a N5).
 
 ## Decisiones y su justificación
 

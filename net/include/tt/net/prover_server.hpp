@@ -22,9 +22,11 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "tt/net/protocol.hpp"
 #include "tt/query/prover_service.hpp"
+#include "tt/query/unverified.hpp"
 
 namespace tt::net {
 
@@ -73,6 +75,16 @@ struct DirectReply {
 };
 using DirectRunner = std::function<DirectReply(const query::ParsedQuery&)>;
 
+// El adaptador MySQL ejecuta una consulta no verificable (N1 a N5) y
+// devuelve el resultado en TTUNV, sin prueba.
+struct UnverifiedReply {
+    std::vector<unsigned char> bytes;
+    std::size_t rows = 0;
+    double sql_seconds = 0;       // conexion MySQL, SQL y lectura de filas
+    double encoding_seconds = 0;  // codificacion TTUNV
+};
+using UnverifiedRunner = std::function<UnverifiedReply(const query::UnverifiedQuery&)>;
+
 // Servidor del probador. No se puede copiar.
 class ProverServer {
 public:
@@ -84,9 +96,12 @@ public:
      *            objetos a los que apunta deben vivir mas que el servidor
      *   options  interfaz, puerto, hilos y tiempos de espera
      *   logger   funcion que recibe cada peticion atendida (puede ser vacia)
+     *   direct_runner      referencia SQL directa (solo con direct_benchmark)
+     *   unverified_runner  consultas no verificables N1 a N5; vacia: la ruta
+     *                      /v1/unverified responde 404
      */
     ProverServer(query::ProverContext context, ServerOptions options, RequestLogger logger = {},
-                 DirectRunner direct_runner = {});
+                 DirectRunner direct_runner = {}, UnverifiedRunner unverified_runner = {});
 
     /*
      * Detiene el servidor si sigue escuchando.
